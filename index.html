@@ -1,0 +1,851 @@
+<meta charset="utf-8">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>NC Stock Manager</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
+<style>
+/* Layout: one narrow column like a clipboard checklist; big tap targets; status shown as chips */
+:root{
+  --teal:#1B97A0; --teal-ink:#0F6E75; --mist:#E8ECEF; --char:#46464A;
+  --bg:#F4F7F8; --card:#FFFFFF; --fg:#2B2C30; --muted:#6A6D74; --line:#D5DCE0;
+  --ok:#1E7F4F; --ok-bg:#E2F3EA; --warn:#9A5B00; --warn-bg:#FCEFD9; --bad:#B3261E; --bad-bg:#FBE4E2;
+  --tealbg:#DDF1F2; --on-teal:#FFFFFF;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --teal:#3DB6BF; --teal-ink:#7FD3D9; --mist:#2A2F33; --char:#C9CCD1;
+  --bg:#151719; --card:#1E2124; --fg:#ECEEF0; --muted:#A3A8AE; --line:#343A3F;
+  --ok:#6FD39E; --ok-bg:#16332A; --warn:#F2B661; --warn-bg:#3A2C14; --bad:#FF8A80; --bad-bg:#3D1C1A;
+  --tealbg:#163538; --on-teal:#0B1C1E; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --teal:#3DB6BF; --teal-ink:#7FD3D9; --mist:#2A2F33; --char:#C9CCD1;
+  --bg:#151719; --card:#1E2124; --fg:#ECEEF0; --muted:#A3A8AE; --line:#343A3F;
+  --ok:#6FD39E; --ok-bg:#16332A; --warn:#F2B661; --warn-bg:#3A2C14; --bad:#FF8A80; --bad-bg:#3D1C1A;
+  --tealbg:#163538; --on-teal:#0B1C1E; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:17px;line-height:1.45;margin:0}
+#app{max-width:560px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px 48px;display:flex;flex-direction:column;gap:14px}
+h1,h2{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:1.7rem;font-weight:800}
+h2{font-size:1.2rem;font-weight:600}
+p{margin:0}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--teal-ink);font-weight:700}
+.test{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:.9rem;font-weight:700}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.muted{color:var(--muted);font-size:.92rem}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.between{justify-content:space-between}
+.row>button{align-self:stretch}
+.stack{display:flex;flex-direction:column;gap:10px}
+button,.btn{font:inherit;font-weight:700;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:13px 16px;min-height:50px;cursor:pointer;text-align:center}
+.btn.pick{position:relative;display:block;overflow:hidden}.btn.pick input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+button.primary,.btn.primary{background:var(--teal);border-color:var(--teal);color:var(--on-teal)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+button.link{background:none;border:none;color:var(--teal-ink);padding:6px 0;min-height:0;text-align:left}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+.full{width:100%}
+.listbtn{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;font-weight:400}
+.listbtn b{font-weight:700}
+label{font-weight:700;font-size:.95rem;display:flex;flex-direction:column;gap:6px}
+input,select,textarea{font:inherit;font-weight:400;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+input[type=checkbox]{width:24px;height:24px;flex:none}
+.check{flex-direction:row;align-items:center;gap:10px;font-weight:400}
+.chip{display:inline-block;border-radius:999px;padding:3px 10px;font-size:.8rem;font-weight:700;white-space:nowrap;background:var(--mist);color:var(--char)}
+.chip.ok{background:var(--ok-bg);color:var(--ok)} .chip.warn{background:var(--warn-bg);color:var(--warn)} .chip.bad{background:var(--bad-bg);color:var(--bad)} .chip.teal{background:var(--tealbg);color:var(--teal-ink)}
+.num{font-variant-numeric:tabular-nums}
+.big{font-family:var(--f-display);font-size:2rem;font-weight:800}
+.bar{height:8px;background:var(--mist);border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:var(--teal)}
+.thumb{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.photo-in{display:none}
+.pin{display:flex;gap:10px;justify-content:center}
+.pin span{width:16px;height:16px;border-radius:50%;border:2px solid var(--teal)}
+.pin span.f{background:var(--teal)}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pad button{font-size:1.4rem;min-height:62px}
+.users{display:grid;gap:10px}
+.notice{border-left:4px solid var(--teal);background:var(--tealbg);padding:10px 12px;border-radius:8px;font-size:.95rem}
+.notice.warn{border-color:var(--warn);background:var(--warn-bg)}
+.notice.bad{border-color:var(--bad);background:var(--bad-bg)}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20;padding:0 max(12px,env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+.modal .card{width:100%;max-width:520px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--char);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:30;font-weight:700;max-width:90%}
+.log{font-size:.88rem}
+.logo{width:48px;height:48px;border-radius:50%;flex:none}
+.biglogo{width:150px;height:150px;border-radius:50%;align-self:center}
+</style>
+
+<div id="app"><p>Loading…</p></div>
+<div id="modal"></div>
+
+<script>
+"use strict";
+// ---------- constants ----------
+const TEST_BUILD = true;
+const LOGO = "data:image/jpeg;base64,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";
+const IDLE_MS = 5*60*1000;      // idle logout
+const AWAY_MS = 2*60*1000;      // logout if app was in background longer than this
+const TZ = "Asia/Kuching";
+const USERS = [
+  {id:"naz", name:"Dr Nazren", role:"admin"},
+  {id:"dom", name:"Dom", role:"staff"},
+  {id:"ester", name:"Ester", role:"staff"}
+];
+const SEED_ITEMS = [
+  ["TEST Paracetamol 500mg tablet","TABLET",["Dispensary Shelf A","Dispensary Shelf B"]],
+  ["TEST Amoxicillin 250mg capsule","CAPSULE",["Dispensary Shelf A"]],
+  ["TEST Surgical gloves (M)","BOX",["Dispensary Shelf C","Dispensary Shelf D"]],
+  ["TEST Influenza vaccine","VIAL",["Dispensary Shelf D"]],
+  ["TEST Normal saline 500ml","BOTTLE",["Dispensary Shelf C"]],
+  ["TEST Calamine lotion","BOTTLE",["Dispensary Shelf B"]],
+  ["TEST Transparent dressing 9x10cm","UNIT",["Dispensary Shelf C","Dispensary Shelf D"]],
+  ["TEST Nasal cannula (infant)","UNIT",["Dispensary Shelf D"]]
+];
+const REASONS = ["Not entered in Klinify (dispensed)","Received but not entered","Counting error","Expired / damaged / disposed","Wrong unit or pack size","Unknown, needs investigation","Other"];
+
+// ---------- storage (IndexedDB) ----------
+let db, S, me = null, lastAction = Date.now(), hiddenAt = 0;
+let view = {name:"home"};
+const urls = {};
+
+function openDb(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open("nc-stock-check",1);
+    r.onupgradeneeded = ()=>{ const d=r.result; d.createObjectStore("kv"); d.createObjectStore("photos"); };
+    r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error);
+  });
+}
+function tx(store, mode, fn){
+  return new Promise((res,rej)=>{
+    const t = db.transaction(store, mode); const st = t.objectStore(store);
+    let out; const q = fn(st); if(q) q.onsuccess = ()=>{ out = q.result; };
+    t.oncomplete = ()=>res(out); t.onerror = ()=>rej(t.error); t.onabort = ()=>rej(t.error);
+  });
+}
+const kvGet = k => tx("kv","readonly",s=>s.get(k));
+const kvPut = (k,v) => tx("kv","readwrite",s=>s.put(v,k));
+const photoGet = id => tx("photos","readonly",s=>s.get(id));
+const photoPut = (id,blob) => tx("photos","readwrite",s=>s.put(blob,id));
+async function save(){ await kvPut("state", S); }
+
+function blankState(){
+  const items=[], locations=[];
+  SEED_ITEMS.forEach(([name,unit,locs],i)=>{
+    const id="I"+(i+1); items.push({id,name,unit});
+    locs.forEach((label,j)=>locations.push({id:id+"L"+(j+1),itemId:id,label,active:true}));
+  });
+  return {v:1, users:USERS.map(u=>({...u,salt:null,hash:null})), items, locations, sessions:[], log:[]};
+}
+
+// ---------- helpers ----------
+const $ = s => document.querySelector(s);
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const now = () => new Date().toISOString();
+function fmt(iso){ if(!iso) return ""; return new Date(iso).toLocaleString("en-GB",{timeZone:TZ,day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}); }
+const userName = id => (S.users.find(u=>u.id===id)||{}).name || id;
+const item = id => S.items.find(i=>i.id===id);
+const activeLocs = itemId => S.locations.filter(l=>l.itemId===itemId && l.active);
+function log(text){ S.log.unshift({at:now(), by:me?me.id:"-", text}); if(S.log.length>2000) S.log.length=2000; }
+function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
+// exact decimal maths on strings: count to 3 decimal places as integers
+function toMilli(s){ s=String(s).trim(); if(!/^-?\d+(\.\d{1,3})?$/.test(s)) return null; const neg=s.startsWith("-"); const [a,b=""]=s.replace("-","").split("."); return (neg?-1:1)*(parseInt(a,10)*1000+parseInt((b+"000").slice(0,3),10)); }
+function fromMilli(m){ const neg=m<0; m=Math.abs(m); const a=Math.floor(m/1000), b=m%1000; return (neg?"-":"")+a+(b?("."+String(b).padStart(3,"0").replace(/0+$/,"")):""); }
+
+async function photoUrl(id){
+  if(!id) return "";
+  if(urls[id]) return urls[id];
+  const b = await photoGet(id); if(!b) return "";
+  return urls[id] = URL.createObjectURL(b);
+}
+async function shrink(file){
+  let bmp;
+  try{ bmp = await createImageBitmap(file, {imageOrientation:"from-image"}); }
+  catch(e){ bmp = await createImageBitmap(file); }
+  const max=1280, k=Math.min(1, max/Math.max(bmp.width,bmp.height));
+  const c=document.createElement("canvas"); c.width=Math.round(bmp.width*k); c.height=Math.round(bmp.height*k);
+  c.getContext("2d").drawImage(bmp,0,0,c.width,c.height);
+  return await new Promise(r=>c.toBlob(r,"image/jpeg",0.72));
+}
+// photo picker: returns stored photo id
+function pickPhoto(){
+  return new Promise(resolve=>{
+    const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.setAttribute("capture","environment"); inp.className="photo-in";
+    inp.onchange = async ()=>{
+      const f=inp.files[0]; inp.remove(); if(!f) return resolve(null);
+      try{ const blob=await shrink(f); const id=uid("P"); await photoPut(id,blob); resolve(id); }
+      catch(e){ toast("That photo could not be read. Try again."); resolve(null); }
+    };
+    document.body.appendChild(inp); hiddenAt=0; window._picking=Date.now(); inp.click();
+  });
+}
+
+// Klinify Inventory Status Report reader: uses text positions from pdf.js to rebuild table rows.
+const KLINIFY_COLS = [["expiry",/^Expiry/i],["name",/^SKU/i],["batch",/^Batch/i],["count",/^Count$/i],["demand",/^Demand/i],["days",/^Days/i],["cost",/^Inventory$/i],["unitCost",/^Unit$/i],["unit",/^Dispensation/i],["maker",/^Manufacturer/i],["tags",/^Tags$/i]];
+const DATE_RE=/^\d{2}\/\d{2}\/\d{4}$/, NUM_RE=/^-?[\d,]+(\.\d+)?$/;
+function klinifyPageRows(items){
+  // items: [{str,x,y,w}] y grows upward (PDF coordinates)
+  const toks=[];
+  for(const it of items){ const s=it.str.replace(/\u0002/g,'-'); if(!s.trim()) continue; toks.push({...it,str:s.trim()}); }
+  // header: find "SKU" token, header band = tokens within a few lines of it
+  const sku=toks.find(t=>/^SKU/.test(t.str)); if(!sku) return null;
+  const HW=/^(Expiry|Date|SKU|Name|Batch|Id|Count|Demand\/?|Day|Demand\/Day|Days|of|Stock|Left|Inventory|Cost|Unit|Dispensation|Manufacturer|Tags)$/i;
+  const band=toks.filter(t=>Math.abs(t.y-sku.y)<30 && t.str.split(/\s+/).every(w=>HW.test(w)));
+  const cols=[];
+  for(const [key,re] of KLINIFY_COLS){
+    let c=band.filter(t=>re.test(t.str));
+    if(key==="unitCost") c=c.filter(t=>band.some(o=>/^Cost$/.test(o.str)&&Math.abs(o.x-t.x)<4)||/Cost/.test(t.str));
+    if(key==="days") c=c.slice(0,1);
+    if(!c.length){ if(key==="tags"||key==="maker"||key==="unitCost"||key==="cost"||key==="demand"||key==="days") continue; return null; }
+    cols.push({key,x:Math.min(...c.map(t=>t.x))});
+  }
+  cols.sort((a,b)=>a.x-b.x);
+  const headTop=Math.max(...band.map(t=>t.y)), headBottom=Math.min(...band.map(t=>t.y));
+  const colOf=t=>{ let k=null; for(const c of cols){ if(t.x>=c.x-3) k=c.key; } return k; };
+  const body=toks.filter(t=>t.y<headBottom-2 && !/Inventory Status Report|^about:blank|^\d{1,2}\/\d{1,2}\/\d{2}, \d/.test(t.str));
+  // a token holding several space-separated values across columns is split by estimated character width
+  const cells=[];
+  for(const t of body){
+    const parts=t.str.split(/\s+/);
+    const c=colOf(t);
+    if(parts.length>1 && c!=="name" && c!=="maker" && c!=="unit" && parts.every(p=>p==="—"||NUM_RE.test(p)||/^RM/.test(p)||DATE_RE.test(p))){
+      const cw=t.w/t.str.length; let off=0;
+      for(const p of parts){ const sub={...t,str:p,x:t.x+off*cw}; cells.push({...sub,col:colOf(sub)}); off+=p.length+1; }
+    } else cells.push({...t,col:c});
+  }
+  const anchors=cells.filter(t=>t.col==="expiry" && (DATE_RE.test(t.str)||t.str==="—")).sort((a,b)=>b.y-a.y);
+  const rows=anchors.map(a=>({y:a.y, cells:{}}));
+  if(!rows.length) return [];
+  // Wrapped cells: lines in one column that sit closer than a row gap form one cell block,
+  // and the whole block goes to the row whose anchor is nearest the block's middle.
+  const carry={};
+  const byCol={};
+  for(const t of cells){ if(t.col) (byCol[t.col] ||= []).push(t); }
+  // line spacing inside a wrapped cell, measured on the stacked header words (e.g. "Expiry" over "Date")
+  let lineGap=Infinity;
+  for(const a of band) for(const b of band){ const g=a.y-b.y; if(g>4 && Math.abs(a.x-b.x)<2 && g<lineGap) lineGap=g; }
+  if(!isFinite(lineGap)) lineGap=13;
+  let minAnchor=Infinity; for(let i=1;i<rows.length;i++) minAnchor=Math.min(minAnchor, rows[i-1].y-rows[i].y);
+  const joinGap=Math.min(lineGap*1.35, isFinite(minAnchor)?minAnchor*0.8:Infinity);
+  for(const arr of Object.values(byCol)){
+    arr.sort((a,b)=>(b.y-a.y)||(a.x-b.x));
+    let block=[];
+    const flush=()=>{ if(!block.length) return; const mid=(block[0].y+block[block.length-1].y)/2;
+      let best=0, bd=Infinity; rows.forEach((r,i)=>{ const d=Math.abs(r.y-mid); if(d<bd){bd=d;best=i;} });
+      // text above the first row that is not centred on it is the tail of a row cut at the previous page break
+      const target = (best===0 && mid-rows[0].y > joinGap*0.9) ? carry : rows[best].cells;
+      for(const t of block) (target[t.col] ||= []).push(t); block=[]; };
+    for(const t of arr){ if(block.length && (block[block.length-1].y - t.y) > joinGap) flush(); block.push(t); }
+    flush();
+  }
+  const txt=cs=>{ const o={}; for(const [k,arr] of Object.entries(cs)){ arr.sort((a,b)=>(b.y-a.y)||(a.x-b.x)); o[k]=arr.map(t=>t.str).join(' ').replace(/\s+/g,' ').replace(/- (?=[A-Z])/g,'-').trim(); } return o; };
+  const out=rows.map(r=>txt(r.cells));
+  if(Object.keys(carry).length) out.unshift({...txt(carry), carry:true});
+  return out;
+  return rows.map(r=>{ const o={}; for(const [k,arr] of Object.entries(r.cells)){ arr.sort((a,b)=>(b.y-a.y)||(a.x-b.x)); o[k]=arr.map(t=>t.str).join(' ').replace(/\s+/g,' ').replace(/- (?=[A-Z])/g,'-').trim(); } return o; });
+}
+function klinifyItems(rows){
+  const merged=[];
+  for(const r of rows){
+    if(r.carry){ const prev=merged[merged.length-1]; if(prev){ for(const [k,v] of Object.entries(r)){ if(k!=='carry' && v) prev[k]=((prev[k]||'')+' '+v).trim(); } } continue; }
+    merged.push({...r});
+  }
+  rows=merged;
+  const items=[]; let cur=null;
+  // A summary row (expiry, batch and count all "—") starts each item; batch rows follow it, even across pages.
+  const first=s=>s.split(/\s+/)[0].toLowerCase();
+  for(const r of rows){
+    const name=(r.name||'').trim(), unit=(r.unit||'').trim(); if(!name) continue;
+    const summary=r.expiry==='—' && (r.batch||'—')==='—' && (r.count||'—')==='—';
+    const same=cur && (name+'|'+unit).toLowerCase()===(cur.name+'|'+cur.unit).toLowerCase();
+    if(!cur || (summary && !same) || (!summary && first(name)!==first(cur.name))){ cur={name,unit,rows:[]}; items.push(cur); }
+    cur.rows.push(r);
+  }
+  const out=[];
+  for(const it of items){
+    const f=it.rows[0];
+    const batches=(f.expiry==='—'&&(f.batch||'—')==='—'&&(f.count||'—')==='—'&&it.rows.length>1)?it.rows.slice(1):it.rows;
+    const shown=batches.filter(b=>b.count && b.count!=='—' && NUM_RE.test(b.count));
+    const odd=batches.filter(b=>b.count && b.count!=='—' && !NUM_RE.test(b.count));
+    let total=null; if(shown.length){ let m=0; for(const b of shown){ const t=b.count.replace(/,/g,''); const neg=t.startsWith('-'); const [a,c='']=t.replace('-','').split('.'); m+=(neg?-1:1)*(parseInt(a,10)*1000+parseInt((c+'000').slice(0,3),10)); } const neg=m<0; m=Math.abs(m); total=(neg?'-':'')+Math.floor(m/1000)+(m%1000?'.'+String(m%1000).padStart(3,'0').replace(/0+$/,''):''); }
+    const plus=batches.filter(b=>b.count&&/^[\d]/.test(b.count)); const minusRows=batches.filter(b=>b.count&&/^-/.test(b.count)).length;
+    let plusTotal=null; if(minusRows&&plus.length){ let m=0; for(const b of plus){ const [a,c='']=b.count.replace(/,/g,'').split('.'); m+=parseInt(a,10)*1000+parseInt((c+'000').slice(0,3),10);} plusTotal=Math.floor(m/1000)+(m%1000?'.'+String(m%1000).padStart(3,'0').replace(/0+$/,''):''); }
+    out.push({name:it.name, unit:it.unit, total, minusRows, plusTotal, batches:batches.map(b=>({expiry:b.expiry,batch:b.batch||'—',count:b.count||'—'})), unreadable:odd.length>0});
+  }
+  // merge items that were split across a page break (same name+unit, adjacent, second has no summary row)
+  return out;
+}
+
+
+// ---------- Klinify PDF import ----------
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+function loadScript(src){ return new Promise((res,rej)=>{ const sc=document.createElement("script"); sc.src=src; sc.onload=res; sc.onerror=()=>rej(new Error("Could not load the PDF reader. Check the internet connection and try again.")); document.head.appendChild(sc); }); }
+async function loadPdfJs(){
+  if(window.pdfjsLib && window.pdfjsWorker) return window.pdfjsLib;
+  await loadScript(PDFJS+"pdf.min.js"); await loadScript(PDFJS+"pdf.worker.min.js");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS+"pdf.worker.min.js";
+  return window.pdfjsLib;
+}
+async function readKlinifyPdf(file, onPage){
+  const lib = await loadPdfJs();
+  const doc = await lib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+  let rows=[], printed=null, noHeader=0;
+  for(let i=1;i<=doc.numPages;i++){
+    const pg=await doc.getPage(i); const tc=await pg.getTextContent();
+    const items=tc.items.map(t=>({str:t.str, x:t.transform[4], y:t.transform[5], w:t.width}));
+    if(!printed){ const f=items.find(t=>/^\d{1,2}\/\d{1,2}\/\d{2}, \d{1,2}:\d{2} [AP]M/.test(t.str.trim())); if(f) printed=f.str.trim(); }
+    const r=klinifyPageRows(items); if(r===null) noHeader++; else rows=rows.concat(r);
+    pg.cleanup(); if(onPage) onPage(i, doc.numPages);
+  }
+  if(!rows.length) throw new Error("This does not look like a Klinify Inventory Status Report. Print it from Inventory Status and choose that PDF.");
+  // footer time is in the browser's M/D/YY h:mm AM format
+  let printedAt=null;
+  if(printed){ const m=printed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}), (\d{1,2}):(\d{2}) ([AP])M/); if(m){ let h=+m[4]%12+(m[6]==="P"?12:0); printedAt=new Date(`20${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}T${String(h).padStart(2,"0")}:${m[5]}:00+08:00`).toISOString(); } }
+  return {items:klinifyItems(rows), pages:doc.numPages, noHeader, printedAt};
+}
+function isoToLocalInput(iso){ if(!iso) return ""; const d=new Date(new Date(iso).getTime()+8*3600000); return d.toISOString().slice(0,16); }
+
+// ---------- crypto ----------
+const enc = new TextEncoder();
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = s => Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function pbkdf2(secret, salt, iters=150000){
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), "PBKDF2", false, ["deriveBits"]);
+  return crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:iters,hash:"SHA-256"}, key, 256);
+}
+async function setPin(u, pin){ const salt=crypto.getRandomValues(new Uint8Array(16)); u.salt=b64(salt); u.hash=b64(await pbkdf2(pin,salt)); }
+async function checkPin(u, pin){ if(!u.hash) return false; return b64(await pbkdf2(pin, unb64(u.salt))) === u.hash; }
+async function aesKey(pass, salt){ const bits=await pbkdf2(pass,salt,300000); return crypto.subtle.importKey("raw",bits,"AES-GCM",false,["encrypt","decrypt"]); }
+
+// ---------- session / logout ----------
+function touch(){ lastAction = Date.now(); }
+function logout(reason){ if(me){ me=null; view={name:"home"}; render(); if(reason) toast(reason); } }
+setInterval(()=>{ if(me && Date.now()-lastAction > IDLE_MS) logout("Signed out after 5 minutes without activity"); }, 15000);
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden){ hiddenAt = Date.now(); }
+  else if(hiddenAt){
+    const away = Date.now()-hiddenAt; hiddenAt=0;
+    const picking = window._picking && Date.now()-window._picking < 10*60*1000;
+    if(me && away > AWAY_MS && !picking) logout("Signed out because the app was in the background");
+  }
+});
+["pointerdown","keydown"].forEach(e=>document.addEventListener(e,()=>{ touch(); window._picking=0; },true));
+
+// ---------- views ----------
+function header(title, back=true){
+  return `<div class="top"><div class="row" style="gap:10px"><img class="logo" src="${LOGO}" alt="Nazren's Clinic Stock Manager logo"><div class="brand">Nazren's Clinic<br>Stock Manager</div></div>${me?`<button class="link" data-act="logout">Sign out</button>`:""}</div>
+  ${TEST_BUILD?`<div class="test">TEST VERSION · not an official record · nothing here changes Klinify</div>`:""}
+  ${back?`<button class="link" data-act="go" data-v="home">← Home</button>`:""}
+  <h1>${esc(title)}</h1>`;
+}
+function progress(sess){
+  let total=0, done=0;
+  sess.lines.forEach(l=>{ const locs=l.locIds; total+=locs.length; done+=locs.filter(id=>l.counts[id]).length; });
+  return {total, done};
+}
+function lineStatus(l){
+  if(l.result==null) return "";
+  if(l.result==="NO_SOURCE") return `<span class="chip warn">PROVISIONAL · no Klinify figure</span>`;
+  if(l.result==="0") return `<span class="chip ok">Match</span>`;
+  const r=l.review;
+  if(!l.recount) return `<span class="chip bad">Difference · recount needed</span>`;
+  if(!r || r.status==="pending") return `<span class="chip warn">Waiting for Dr Nazren</span>`;
+  if(r.status==="returned") return `<span class="chip bad">Sent back</span>`;
+  if(r.decision==="adjust" && !r.klinifyRef) return `<span class="chip warn">Approved · Klinify ref needed</span>`;
+  return `<span class="chip ok">Closed</span>`;
+}
+
+function vLogin(){
+  const noPins = S.users.every(u=>!u.hash);
+  return header("Who is using the phone?", false).replace('<h1>','<img class="biglogo" src="'+LOGO+'" alt=""><h1>') + `
+  <div class="users">${S.users.filter(u=>u.role==="admin"||u.active!==false).map(u=>`
+    <button class="listbtn" data-act="pickuser" data-id="${u.id}"><span><b>${esc(u.name)}</b><br><span class="muted">${u.role==="admin"?"Admin":"Stock manager"}</span></span><span class="chip ${u.hash?"teal":"warn"}">${u.hash?"Enter PIN":"Set PIN"}</span></button>`).join("")}
+  </div>
+  ${noPins&&S.sessions.length===0?`<div class="card"><p class="muted">Setting up a new phone? You can restore an encrypted recovery copy instead.</p><button data-act="go" data-v="restore">Restore from recovery copy</button></div>`:""}`;
+}
+function vPin(){
+  const u=S.users.find(x=>x.id===view.user); const setting=!u.hash;
+  const title = setting ? (view.first? `Confirm your PIN` : `Choose a 6-digit PIN`) : `Enter PIN`;
+  const n=(view.pin||"").length;
+  return header(`${u.name}`, false) + `
+  <p>${title}${setting&&!view.first?`<br><span class="muted">${TEST_BUILD?"Test version: use any 6 digits, not your real one.":"Keep it private. Do not share it."}</span>`:""}</p>
+  <div class="pin">${[0,1,2,3,4,5].map(i=>`<span class="${i<n?"f":""}"></span>`).join("")}</div>
+  ${view.err?`<div class="notice bad">${esc(view.err)}</div>`:""}
+  <div class="pad">${[1,2,3,4,5,6,7,8,9].map(d=>`<button data-act="digit" data-d="${d}">${d}</button>`).join("")}
+  <button data-act="go" data-v="home">Back</button><button data-act="digit" data-d="0">0</button><button data-act="del">Del</button></div>`;
+}
+
+function vHome(){
+  const pendingReview = S.sessions.flatMap(s=>s.lines.map(l=>({s,l}))).filter(({l})=>l.recount && (!l.review||l.review.status==="pending")).length;
+  const refNeeded = S.sessions.flatMap(s=>s.lines).filter(l=>l.review&&l.review.status==="approved"&&l.review.decision==="adjust"&&!l.review.klinifyRef).length;
+  const open = S.sessions.filter(s=>s.status!=="complete" || s.lines.some(l=>l.result && l.result!=="0" && l.result!=="NO_SOURCE" && !(l.review&&l.review.status==="approved"&&(l.review.decision!=="adjust"||l.review.klinifyRef))));
+  const closed = S.sessions.filter(s=>!open.includes(s));
+  const card = s=>{
+    const p=progress(s); const pct=p.total?Math.round(100*p.done/p.total):0;
+    const st = s.status==="preparing"?`<span class="chip">Klinify figures being entered</span>`:s.status==="counting"?`<span class="chip teal">Counting · ${p.done}/${p.total} places</span>`:`<span class="chip ok">Count finished</span>`;
+    return `<button class="listbtn card" data-act="open" data-id="${s.id}"><span class="stack" style="gap:6px;flex:1;min-width:0"><b>${esc(s.type)} count · ${fmt(s.createdAt).slice(0,10)}</b><span>${st}</span><span class="muted">${s.lines.length} items · prepared by ${esc(userName(s.preparer))}${s.counter?` · counted by ${esc(userName(s.counter))}`:""}</span>${s.status==="counting"?`<span class="bar"><i style="width:${pct}%"></i></span>`:""}</span><span aria-hidden="true">›</span></button>`;
+  };
+  return header(`Hello, ${me.name}`, false) + `
+  ${me.role==="admin"&&(pendingReview||refNeeded)?`<button class="listbtn card" data-act="go" data-v="review"><span><b>Differences to review</b><br><span class="muted">${pendingReview} waiting for your approval${refNeeded?` · ${refNeeded} need a Klinify reference`:""}</span></span><span class="chip warn num">${pendingReview+refNeeded}</span></button>`:""}
+  ${me.role!=="admin"&&refNeeded?`<div class="notice warn">${refNeeded} approved adjustment(s) need the Klinify reference recorded. Open the count to add it.</div>`:""}
+  <button class="primary full" data-act="go" data-v="new">Start a new count</button>
+  <button class="full" data-act="go" data-v="import">Import Klinify report (PDF)</button>
+  <h2>Open counts</h2>
+  ${open.length?open.map(card).join(""):`<p class="muted">No open counts. Tap "Start a new count" to begin.</p>`}
+  <div class="row"><button style="flex:1" data-act="go" data-v="items">Items &amp; places</button><button style="flex:1" data-act="go" data-v="history">Past counts${closed.length?` (${closed.length})`:""}</button></div>
+  ${me.role==="admin"?`<div class="row"><button style="flex:1" data-act="go" data-v="backup">Recovery copy</button><button style="flex:1" data-act="go" data-v="activity">Activity log</button></div>`:""}
+  ${me.role==="admin"?`<button data-act="go" data-v="staff">Dom / Ester access</button>`:""}
+  ${TEST_BUILD&&me.role==="admin"?`<button class="danger" data-act="askreset">Erase all test data</button>`:""}`;
+}
+
+
+function vImport(){
+  const r=view.result;
+  let h = header("Import Klinify report") + `<div class="card"><p>In Klinify, open <b>Inventory Status</b>, print it to PDF, then choose that PDF here. Items and Klinify counts are read on this phone. Places can be added later.</p>
+  ${view.busy?`<button class="primary full" data-act="importpdf" disabled>${esc(view.busy)}</button>`:`<label class="btn pick primary">Choose Klinify PDF<input type="file" id="pdfin" accept="application/pdf,.pdf"></label>`}</div>`;
+  if(r){
+    const q=(view.iq||"").toLowerCase();
+    const shown=r.items.filter(i=>i.name.toLowerCase().includes(q));
+    const provisional=r.items.filter(i=>i.total===null).length, neg=r.items.filter(i=>i.total&&i.total.startsWith("-")).length, minus=r.items.filter(i=>i.minusRows).length;
+    h += `<div class="card"><h2>${r.items.length} items found</h2>
+    <p class="muted">${r.pages} pages · printed ${r.printedAt?fmt(r.printedAt):"time not found"}</p>
+    <div class="row"><span class="chip ok">${r.items.length-provisional} with a count</span><span class="chip warn">${provisional} shown as — (PROVISIONAL)</span>${neg?`<span class="chip bad">${neg} below zero</span>`:""}${minus?`<span class="chip warn">${minus} with minus batch rows</span>`:""}</div>
+    ${r.noHeader?`<div class="notice warn">${r.noHeader} page(s) had no table and were skipped.</div>`:""}
+    <p class="muted">Check a few items against Klinify before saving. "—" is kept as not shown, never as zero.</p>
+    <button class="primary" data-act="importsave">Save items and Klinify figures</button></div>
+    <input id="iq" data-act="iq" placeholder="Search the list" value="${esc(view.iq||"")}" aria-label="Search the list">
+    <div class="card" style="overflow-x:auto"><table><tr><th>Item</th><th>Unit</th><th class="num">Klinify</th></tr>
+    ${shown.slice(0,200).map(i=>`<tr><td>${esc(i.name)}${i.batches.length>1?`<br><span class="muted">${i.batches.length} batch rows</span>`:""}</td><td>${esc(i.unit)}</td><td class="num">${i.total===null?`<span class="chip warn">—</span>`:esc(i.total)}${i.minusRows?`<br><span class="muted">${i.minusRows} minus row(s)${i.plusTotal?` · ${esc(i.plusTotal)} before minus`:""}</span>`:""}</td></tr>`).join("")}
+    </table>${shown.length>200?`<p class="muted">Showing 200 of ${shown.length}. Search to find others.</p>`:""}</div>`;
+  }
+  return h;
+}
+
+function vHistory(){
+  const done = S.sessions.filter(s=>s.status==="complete");
+  return header("Past counts") + (done.length?done.map(s=>`<button class="listbtn card" data-act="open" data-id="${s.id}"><span><b>${esc(s.type)} · ${fmt(s.createdAt).slice(0,10)}</b><br><span class="muted">${s.lines.length} items · ${s.lines.filter(l=>l.result==="0").length} matched</span></span><span>›</span></button>`).join(""):`<p class="muted">No finished counts yet.</p>`);
+}
+
+function vNew(){
+  const sel = view.sel || {};
+  const items = S.items.filter(i=>!i.archived);
+  const q=(view.nq||"").toLowerCase(); const shown=items.filter(i=>i.name.toLowerCase().includes(q));
+  const n=Object.values(sel).filter(Boolean).length;
+  return header("New count") + `
+  <div class="card"><label for="ctype">Type of count<select id="ctype" data-act="ctype"><option ${view.type!=="Monthly full"?"selected":""}>Weekly</option><option ${view.type==="Monthly full"?"selected":""}>Monthly full</option></select></label>
+  <p class="muted">You will check the Klinify figures. A different person must do the physical count.</p>
+  ${S.report?`<p class="muted">Klinify figures will be filled from the report printed ${fmt(S.report.printedAt)}.</p>`:""}</div>
+  <div class="card"><div class="row between"><h2>Items to count</h2><span class="chip teal">${n} chosen</span></div>
+  <input id="nq" data-act="nq" placeholder="Search items" value="${esc(view.nq||"")}" aria-label="Search items">
+  <div class="row"><button class="link" data-act="selshown">Select all shown (${shown.length})</button> · <button class="link" data-act="selnone">Clear</button></div>
+  ${shown.slice(0,150).map(i=>`<label class="check"><input type="checkbox" data-act="sel" data-id="${i.id}" ${sel[i.id]?"checked":""}> <span>${esc(i.name)} <span class="muted">· ${esc(i.unit)}${i.klinify?` · Klinify ${i.klinify.total===null?"—":esc(i.klinify.total)}`:""}</span></span></label>`).join("")}
+  ${shown.length>150?`<p class="muted">Showing 150 of ${shown.length}. Search to narrow the list.</p>`:""}
+  </div>
+  <button class="primary full" data-act="create" ${n?"":"disabled"}>Create count (${n} items)</button>`;
+}
+
+async function vSession(){
+  const s=S.sessions.find(x=>x.id===view.id);
+  const isPrep = me.id===s.preparer;
+  if(s.status==="preparing"){
+    if(!isPrep) return header(`${s.type} count`) + `<div class="notice">${esc(userName(s.preparer))} is still entering the Klinify figures for this count.</div>`;
+    const ready = (s.sourcePhoto || s.reportFile) && s.sourceAt;
+    const shot = s.sourcePhoto?`<img class="thumb" src="${await photoUrl(s.sourcePhoto)}" alt="Klinify screenshot">`:"";
+    return header(`Enter Klinify figures`) + `
+    <div class="card"><h2>1. Klinify source</h2>
+    ${s.reportFile?`<div class="notice">Using the Klinify Inventory Status Report printed ${fmt(s.sourceAt)}. The PDF is kept as evidence. A screenshot is optional.</div>`:`<p class="muted">Open Inventory Status in Klinify, then photograph or screenshot it. This is kept as evidence.</p>`}
+    <div class="row">${shot}<button data-act="srcphoto">${s.sourcePhoto?"Replace screenshot":"Add screenshot"}</button></div>
+    <label for="srcat">Time the Klinify screen was checked<input id="srcat" type="datetime-local" data-act="srcat" value="${esc(s.sourceAtLocal||"")}"></label>
+    <label for="scope">Filters shown on the Klinify screen (optional)<input id="scope" data-act="scope" value="${esc(s.scope||"")}" placeholder="e.g. Expiry date from 01/10/2026"></label></div>
+    <div class="card"><h2>2. Klinify figure for each item</h2>
+    <p class="muted">Type exactly what Klinify shows. 0 means zero. Leave blank if Klinify does not show it; that item will be marked PROVISIONAL.</p>
+    ${s.lines.map((l,i)=>`<div class="stack" style="gap:6px;border-top:1px solid var(--line);padding-top:10px">
+      <b>${esc(item(l.itemId).name)}</b>${l.fromReport?`<span class="muted">From report: ${l.expected===""?"— (not shown)":esc(l.expected)}${l.batches&&l.batches.length>1?` · ${l.batches.length} batch rows`:""}${l.minusRows?` · includes ${l.minusRows} minus row(s); ${esc(l.plusTotal||"0")} before minus`:""}</span>`:""}
+      <div class="row"><input style="flex:1;min-width:110px" inputmode="decimal" id="exp${i}" data-act="exp" data-i="${i}" value="${esc(l.expected)}" placeholder="Klinify count" aria-label="Klinify count">
+      <input style="flex:1;min-width:110px" id="unit${i}" data-act="unit" data-i="${i}" value="${esc(l.unit)}" aria-label="Unit"></div></div>`).join("")}
+    </div>
+    ${ready?"":`<div class="notice warn">Add the Klinify screenshot (or import the report) and the time it was checked before handing over.</div>`}
+    <button class="primary full" data-act="handover" ${ready?"":"disabled"}>Hand over for counting</button>`;
+  }
+  if(s.status==="counting"){
+    const p=progress(s);
+    if(isPrep) return header(`${s.type} count`) + `<div class="notice">You entered the Klinify figures, so someone else must count. Sign out and pass the phone to Dom, Ester or Dr Nazren.</div><p class="muted">${p.done} of ${p.total} places counted so far.</p>`;
+    if(s.counter && s.counter!==me.id) return header(`${s.type} count`) + `<div class="notice">${esc(userName(s.counter))} is counting this. Only one person counts each session.</div>`;
+    return header(`Count the stock`) + `
+    <div class="notice">Klinify figures are hidden until you finish. Count what is really there.</div>
+    <div class="card"><div class="row between"><b>${p.done} of ${p.total} places counted</b><span class="muted">${Math.round(100*p.done/(p.total||1))}%</span></div><div class="bar"><i style="width:${Math.round(100*p.done/(p.total||1))}%"></i></div></div>
+    ${s.lines.map((l,i)=>{ const d=l.locIds.filter(id=>l.counts[id]).length; return `<button class="listbtn card" data-act="countitem" data-i="${i}"><span><b>${esc(item(l.itemId).name)}</b><br><span class="muted">${d}/${l.locIds.length} places · unit ${esc(l.unit)}</span></span><span class="chip ${d===l.locIds.length?"ok":d?"teal":""}">${d===l.locIds.length?"Done":d?"Started":"To do"}</span></button>`; }).join("")}
+    <button class="primary full" data-act="askfinish" ${p.done===p.total&&p.total>0?"":"disabled"}>Finish count and compare</button>
+    ${p.done<p.total?`<p class="muted">Finish unlocks when every place has a number and a photo.</p>`:""}`;
+  }
+  // complete
+  const rows = await Promise.all(s.lines.map(async (l,i)=>{
+    const tot = l.total;
+    return `<button class="listbtn card" data-act="line" data-i="${i}"><span class="stack" style="gap:4px;flex:1;min-width:0"><b>${esc(item(l.itemId).name)}</b>
+    <span class="num">Klinify ${l.expected===""?"—":esc(l.expected)} · Counted ${esc(tot)} ${esc(l.unit)}${l.result&&l.result!=="0"&&l.result!=="NO_SOURCE"?` · <b>${toMilli(l.result)>0?"+":""}${esc(l.result)}</b>`:""}</span>${lineStatus(l)}</span><span>›</span></button>`;
+  }));
+  const m = s.lines.filter(l=>l.result==="0").length, v=s.lines.filter(l=>l.result&&l.result!=="0"&&l.result!=="NO_SOURCE").length, pr=s.lines.filter(l=>l.result==="NO_SOURCE").length;
+  return header(`${s.type} count result`) + `
+  <div class="card"><div class="row"><span class="chip ok">${m} match</span><span class="chip bad">${v} difference</span>${pr?`<span class="chip warn">${pr} provisional</span>`:""}</div>
+  <p class="muted">Prepared by ${esc(userName(s.preparer))} · counted by ${esc(userName(s.counter))} · finished ${fmt(s.completedAt)}</p>
+  ${s.sourcePhoto?`<button class="link" data-act="viewsrc">View Klinify screenshot</button>`:""}${s.reportFile?`<p class="muted">Source: Klinify report printed ${fmt(s.sourceAt)}</p>`:""}</div>
+  ${rows.join("")}`;
+}
+
+async function vCountItem(){
+  const s=S.sessions.find(x=>x.id===view.id); const l=s.lines[view.i]; const it=item(l.itemId);
+  const blocks = await Promise.all(l.locIds.map(async id=>{
+    const loc=S.locations.find(x=>x.id===id); const c=l.counts[id]; const d=(view.drafts||{})[id]||{};
+    const photo = d.photo || (c&&c.photo); const qty = d.qty!=null?d.qty:(c?c.qty:"");
+    return `<div class="card"><div class="row between"><h2>${esc(loc.label)}</h2>${c?`<span class="chip ok">Saved</span>`:`<span class="chip">To do</span>`}</div>
+    <label for="q${id}">How many ${esc(l.unit)}?<input id="q${id}" inputmode="decimal" data-act="qty" data-loc="${id}" value="${esc(qty)}" placeholder="0 if empty"></label>
+    <div class="row">${photo?`<img class="thumb" src="${await photoUrl(photo)}" alt="Stock photo">`:""}<button data-act="locphoto" data-loc="${id}">${photo?"Retake photo":"Take photo of the stock"}</button></div>
+    <button class="primary" data-act="savecount" data-loc="${id}">${c?"Update this place":"Save this place"}</button></div>`;
+  }));
+  return header(it.name) + `<button class="link" data-act="open" data-id="${s.id}">← Back to count list</button>
+  <p class="muted">Count each place separately. Photo should show the stock only, no patient records.</p>${blocks.join("")}
+  <button class="link" data-act="go" data-v="items">Missing a place? Edit places for this item</button>`;
+}
+
+async function vLine(){
+  const s=S.sessions.find(x=>x.id===view.id); const l=s.lines[view.i]; const it=item(l.itemId);
+  const counts = await Promise.all(l.locIds.map(async id=>{ const loc=S.locations.find(x=>x.id===id); const c=l.counts[id]; return `<tr><td>${esc(loc.label)}</td><td class="num">${esc(c.qty)}</td><td>${c.photo?`<img class="thumb" src="${await photoUrl(c.photo)}" alt="">`:""}</td></tr>`; }));
+  let body = `<div class="card"><table><tr><th>Klinify</th><td class="num">${l.expected===""?"Not shown (PROVISIONAL)":esc(l.expected)+" "+esc(l.unit)}</td></tr><tr><th>Counted</th><td class="num">${esc(l.total)} ${esc(l.unit)}</td></tr>${l.result&&l.result!=="NO_SOURCE"?`<tr><th>Difference</th><td class="num"><b>${toMilli(l.result)>0?"+":""}${esc(l.result)}</b></td></tr>`:""}</table>
+  <table><tr><th>Place</th><th>Count</th><th>Photo</th></tr>${counts.join("")}</table>
+  ${l.batches&&l.batches.length?`<details><summary class="muted">Klinify batch rows (${l.batches.length})</summary><table><tr><th>Expiry</th><th>Batch</th><th class="num">Count</th></tr>${l.batches.map(b=>`<tr><td>${esc(b.expiry)}</td><td>${esc(b.batch)}</td><td class="num">${esc(b.count)}</td></tr>`).join("")}</table></details>`:""}</div>`;
+  if(l.result==="NO_SOURCE") body += `<div class="notice warn">Klinify did not show a figure for this item, so no comparison was made. Recheck Klinify and include it in the next count.</div>`;
+  if(l.result && l.result!=="0" && l.result!=="NO_SOURCE"){
+    if(!l.recount || (l.review&&l.review.status==="returned")){
+      if(me.id===s.preparer && me.role!=="admin"){ body += `<div class="notice">A recount is needed. Someone other than the preparer should recount.</div>`; }
+      else{
+        const d=view.rc||{};
+        body += `<div class="card"><h2>Recount and explain</h2>${l.review&&l.review.status==="returned"?`<div class="notice bad">Sent back by Dr Nazren: ${esc(l.review.note||"")}</div>`:""}
+        <label for="rcq">Recount total (${esc(l.unit)})<input id="rcq" inputmode="decimal" data-act="rc" data-f="qty" value="${esc(d.qty||"")}"></label>
+        <label for="rcr">Likely reason<select id="rcr" data-act="rc" data-f="reason"><option value="">Choose…</option>${REASONS.map(r=>`<option ${d.reason===r?"selected":""}>${esc(r)}</option>`).join("")}</select></label>
+        <label for="rcn">Details<textarea id="rcn" rows="2" data-act="rc" data-f="note">${esc(d.note||"")}</textarea></label>
+        <div class="row">${d.photo?`<img class="thumb" src="${await photoUrl(d.photo)}" alt="">`:""}<button data-act="rcphoto">${d.photo?"Retake photo":"Take supporting photo"}</button></div>
+        <button class="primary" data-act="rcsubmit">Send to Dr Nazren</button></div>`;
+      }
+    } else {
+      const r=l.recount;
+      body += `<div class="card"><h2>Recount</h2><p class="num">${esc(r.qty)} ${esc(l.unit)} · by ${esc(userName(r.by))} · ${fmt(r.at)}</p><p><b>${esc(r.reason)}</b>${r.note?` · ${esc(r.note)}`:""}</p>${r.photo?`<img class="thumb" src="${await photoUrl(r.photo)}" alt="">`:""}</div>`;
+      const rv=l.review;
+      if(!rv || rv.status==="pending"){
+        body += me.role==="admin" ? `<div class="card"><h2>Your decision</h2><label for="rvn">Note (optional)<input id="rvn" data-act="rvnote" value="${esc(view.rvnote||"")}"></label>
+        <button class="primary" data-act="approve" data-d="adjust">Approve: adjust Klinify</button>
+        <button data-act="approve" data-d="noadjust">Approve: no adjustment needed</button>
+        <button class="danger" data-act="approve" data-d="return">Send back for another recount</button><p class="muted">You will confirm with your approval passphrase.</p></div>`
+        : `<div class="notice">Waiting for Dr Nazren's approval.</div>`;
+      } else if(rv.status==="approved"){
+        body += `<div class="card"><h2>Decision</h2><p>Approved by ${esc(userName(rv.by))} on ${fmt(rv.at)}: <b>${rv.decision==="adjust"?"adjust Klinify":"no adjustment needed"}</b>${rv.note?` · ${esc(rv.note)}`:""}</p>
+        ${rv.decision==="adjust"?(rv.klinifyRef?`<p>Klinify reference: <b>${esc(rv.klinifyRef)}</b> · entered by ${esc(userName(rv.refBy))} ${fmt(rv.refAt)}</p>`:`
+        <div class="notice warn">The app does not change Klinify. A person who already has Klinify adjustment rights makes the adjustment, then records its reference here.</div>
+        <label for="kref">Klinify adjustment reference<input id="kref" data-act="kref" value="${esc(view.kref||"")}"></label>
+        <label class="check"><input type="checkbox" id="kauth" data-act="kauth" ${view.kauth?"checked":""}> I already have Klinify adjustment rights and made this adjustment</label>
+        <button class="primary" data-act="saveref">Save reference</button>`):""}</div>`;
+      }
+    }
+  }
+  return header(it.name) + `<button class="link" data-act="open" data-id="${s.id}">← Back to result</button>` + body;
+}
+
+function vReview(){
+  const list = S.sessions.flatMap(s=>s.lines.map((l,i)=>({s,l,i}))).filter(({l})=>l.recount&&(!l.review||l.review.status==="pending"||(l.review.status==="approved"&&l.review.decision==="adjust"&&!l.review.klinifyRef)));
+  return header("Differences to review") + (list.length?list.map(({s,l,i})=>`<button class="listbtn card" data-act="line" data-sid="${s.id}" data-i="${i}"><span><b>${esc(item(l.itemId).name)}</b><br><span class="muted num">Klinify ${esc(l.expected)} · counted ${esc(l.total)} · recount ${esc(l.recount.qty)}</span><br>${lineStatus(l)}</span><span>›</span></button>`).join(""):`<p class="muted">Nothing waiting.</p>`);
+}
+
+function vItems(){
+  const q=(view.q||"").toLowerCase();
+  const all=S.items.filter(i=>!i.archived && i.name.toLowerCase().includes(q)); const items=all.slice(0,60);
+  return header("Items & places") + `
+  <input id="isearch" data-act="isearch" placeholder="Search items" value="${esc(view.q||"")}" aria-label="Search items">
+  ${items.map(i=>`<div class="card"><div class="row between"><b>${esc(i.name)}</b><span class="muted">${esc(i.unit)}</span></div>
+    ${activeLocs(i.id).map(l=>`<div class="row between"><span>${esc(l.label)}</span><span class="row" style="gap:4px"><button class="link" data-act="renloc" data-id="${l.id}">Rename</button> · <button class="link" data-act="archloc" data-id="${l.id}">Remove</button></span></div>`).join("")||`<p class="muted">No places yet.</p>`}
+    <button class="link" data-act="addloc" data-id="${i.id}">+ Add a place</button></div>`).join("")}
+  ${all.length>60?`<p class="muted">Showing 60 of ${all.length} items. Search to find others.</p>`:""}
+  <div class="card"><h2>Add an item</h2><label for="niname">Item name (as in Klinify)<input id="niname" data-act="niname" value="${esc(view.niname||"")}"></label><label for="niunit">Unit<input id="niunit" data-act="niunit" value="${esc(view.niunit||"")}" placeholder="TABLET, BOX, VIAL…"></label><button data-act="additem">Add item</button></div>
+  <p class="muted">Every change is logged for Dr Nazren's review.</p>`;
+}
+
+function vActivity(){
+  return header("Activity log") + `<div class="card log">${S.log.slice(0,300).map(e=>`<div><span class="muted num">${fmt(e.at)}</span> · <b>${esc(userName(e.by))}</b> · ${esc(e.text)}</div>`).join("")||"<p class='muted'>No activity yet.</p>"}</div>`;
+}
+function vStaff(){
+  return header("Dom / Ester access") + S.users.filter(u=>u.role!=="admin").map(u=>`<div class="card"><div class="row between"><b>${esc(u.name)}</b><span class="chip ${u.active===false?"bad":"ok"}">${u.active===false?"Off":"On"}</span></div>
+  <div class="row"><button data-act="toggleuser" data-id="${u.id}">${u.active===false?"Turn on":"Turn off"}</button><button data-act="resetpin" data-id="${u.id}">Reset PIN</button></div></div>`).join("") + `<p class="muted">Reset PIN lets that person choose a new PIN at next sign-in.</p>`;
+}
+function vBackup(){
+  return header("Recovery copy") + `
+  <div class="card"><p>Saves everything (counts, photos, log, accounts) into one locked file. Save it to the <b>Stock NC</b> Google Drive.</p>
+  <label for="bp1">Recovery passphrase (at least 10 characters)<input id="bp1" type="password" autocomplete="new-password" data-act="bp" data-f="p1"></label>
+  <label for="bp2">Type it again<input id="bp2" type="password" autocomplete="new-password" data-act="bp" data-f="p2"></label>
+  <p class="muted">Keep this passphrase somewhere safe and separate. Without it the file cannot be opened.</p>
+  <button class="primary" data-act="backup">Create recovery copy</button></div>
+  ${S.lastBackup?`<p class="muted">Last recovery copy: ${fmt(S.lastBackup)}</p>`:`<div class="notice warn">No recovery copy made yet.</div>`}`;
+}
+function vRestore(){
+  return header("Restore") + `<div class="card"><p>Choose a recovery file (.ncstock) and enter its passphrase. This only works on an empty phone app.</p>
+  <label for="rp">Recovery passphrase<input id="rp" type="password" data-act="rp"></label>
+  <button class="primary" data-act="restore">Choose file and restore</button></div>`;
+}
+
+async function render(){
+  const app=$("#app");
+  try{
+    let h;
+    if(!me){ h = view.name==="pin"?vPin():view.name==="restore"?vRestore():vLogin(); }
+    else{
+      const f={import:vImport,home:vHome,new:vNew,session:vSession,countitem:vCountItem,line:vLine,review:vReview,items:vItems,activity:vActivity,staff:vStaff,backup:vBackup,history:vHistory}[view.name]||vHome;
+      if(view.name!=="home" && ["activity","staff","backup"].includes(view.name) && me.role!=="admin") h=vHome(); else h=await f();
+    }
+    app.innerHTML = h;
+  }catch(e){ console.error(e); app.innerHTML = header("Something went wrong", !!me) + `<div class="notice bad">${esc(e.message)}</div><p class="muted">Your saved records are safe.</p>`; }
+}
+function go(v){ view = typeof v==="string"?{name:v}:v; render().then(()=>window.scrollTo(0,0)); }
+
+// ---------- modal ----------
+function modal(html){ $("#modal").innerHTML = `<div class="modal"><div class="card">${html}</div></div>`; const i=$("#modal input"); if(i) i.focus(); }
+function closeModal(){ $("#modal").innerHTML=""; }
+function askText(title, label, value, onOk){
+  modal(`<h2>${esc(title)}</h2><label for="mtext">${esc(label)}<input id="mtext" value="${esc(value||"")}"></label><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Save</button></div>`);
+  window._mok = ()=>{ const v=$("#mtext").value.trim(); if(!v) return; closeModal(); onOk(v); };
+}
+function confirmBox(title, text, okLabel, onOk, danger){
+  modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="${danger?"danger":"primary"}" data-act="mok">${esc(okLabel)}</button></div>`);
+  window._mok = ()=>{ closeModal(); onOk(); };
+}
+// Admin approval uses a separate, longer passphrase (not the 6-digit PIN)
+function askAdminPin(onOk){
+  const admin=S.users.find(u=>u.role==="admin");
+  if(me.role!=="admin") return toast("Only Dr Nazren can do this.");
+  if(!admin.apHash){
+    modal(`<h2>Create your approval passphrase</h2><p class="muted">Used only to approve differences and reset staff PINs. At least 8 characters, different from your PIN.${TEST_BUILD?" Test version: do not use your real one.":""}</p><label for="ap1">Approval passphrase<input id="ap1" type="password" autocomplete="new-password"></label><label for="ap2">Type it again<input id="ap2" type="password" autocomplete="new-password"></label><div id="merr"></div><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Save and continue</button></div>`);
+    window._mok = async ()=>{ const a=$("#ap1").value, b=$("#ap2").value;
+      if(a.length<8) return $("#merr").innerHTML=`<div class="notice bad">Use at least 8 characters.</div>`;
+      if(a!==b) return $("#merr").innerHTML=`<div class="notice bad">The two entries do not match.</div>`;
+      if(/^\d{6}$/.test(a) && await checkPin(admin,a)) return $("#merr").innerHTML=`<div class="notice bad">Choose something different from your PIN.</div>`;
+      const salt=crypto.getRandomValues(new Uint8Array(16)); admin.apSalt=b64(salt); admin.apHash=b64(await pbkdf2(a,salt)); log("Created approval passphrase"); await save(); closeModal(); onOk(); };
+    return;
+  }
+  modal(`<h2>Confirm with your approval passphrase</h2><label for="mpin">Approval passphrase<input id="mpin" type="password" autocomplete="off"></label><div id="merr"></div><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Confirm</button></div>`);
+  window._mok = async ()=>{ const v=$("#mpin").value; if(v && b64(await pbkdf2(v,unb64(admin.apSalt)))===admin.apHash){ closeModal(); onOk(); } else $("#merr").innerHTML=`<div class="notice bad">Wrong passphrase.</div>`; };
+}
+
+// ---------- actions ----------
+let failCount = 0, lockUntil = 0;
+async function act(a, el){
+  const d = el.dataset; const sess = () => S.sessions.find(x=>x.id===view.id);
+  switch(a){
+    case "go": return go(d.v);
+    case "logout": me=null; return go("home");
+    case "mclose": return closeModal();
+    case "mok": return window._mok && window._mok();
+    case "pickuser": return go({name:"pin", user:d.id, pin:""});
+    case "digit": case "del": {
+      if(Date.now()<lockUntil){ view.err=`Too many wrong tries. Wait ${Math.ceil((lockUntil-Date.now())/1000)} seconds.`; return render(); }
+      view.pin = a==="del" ? (view.pin||"").slice(0,-1) : ((view.pin||"")+d.d).slice(0,6); view.err="";
+      if(view.pin.length<6) return render();
+      const u=S.users.find(x=>x.id===view.user);
+      if(!u.hash){
+        if(!view.first){ view.first=view.pin; view.pin=""; return render(); }
+        if(view.first!==view.pin){ view.first=null; view.pin=""; view.err="PINs did not match. Choose again."; return render(); }
+        await setPin(u, view.pin); me=u; log("Set PIN and signed in"); await save(); touch(); return go("home");
+      }
+      if(await checkPin(u, view.pin)){ failCount=0; me=u; log("Signed in"); await save(); touch(); return go("home"); }
+      failCount++; if(failCount>=5){ lockUntil=Date.now()+30000*Math.pow(2,failCount-5); }
+      view.pin=""; view.err="Wrong PIN."; return render();
+    }
+    case "askreset": return confirmBox("Erase all test data?","This removes every test count, photo and PIN on this phone. Use only in the test version.","Erase", async ()=>{ await tx("photos","readwrite",s=>s.clear()); S=blankState(); await save(); me=null; go("home"); }, true);
+    // new count
+    case "ctype": view.type=el.value; if(el.value==="Monthly full"){ view.sel={}; S.items.filter(i=>!i.archived).forEach(i=>view.sel[i.id]=true);} return render();
+    case "sel": view.sel=view.sel||{}; view.sel[d.id]=el.checked; return render();
+    case "selall": { const items=S.items.filter(i=>!i.archived); const all=items.every(i=>(view.sel||{})[i.id]); view.sel={}; if(!all) items.forEach(i=>view.sel[i.id]=true); return render(); }
+    case "create": {
+      const ids=Object.keys(view.sel||{}).filter(k=>view.sel[k]);
+      for(const id of ids){ if(!activeLocs(id).length){ S.locations.push({id:uid("L"),itemId:id,label:"Place not set yet",active:true}); } }
+      const rep=S.report;
+      const s={id:uid("S"), type:view.type||"Weekly", createdAt:now(), preparer:me.id, status:"preparing", sourcePhoto:null,
+        reportFile: rep?rep.file:null, sourceAt: rep?rep.printedAt:null, sourceAtLocal: rep?isoToLocalInput(rep.printedAt):"", scope: rep?"Klinify Inventory Status Report (printed PDF)":"",
+        lines: ids.map(id=>{ const it=item(id); const k=rep&&it.klinify&&it.klinify.reportId===rep.id?it.klinify:null;
+          return {itemId:id, expected:k&&k.total!==null?k.total:"", fromReport:!!k, batches:k?k.batches:null, plusTotal:k?k.plusTotal:null, minusRows:k?k.minusRows:0, unit:it.unit, locIds:activeLocs(id).map(l=>l.id), counts:{}, total:null, result:null}; })};
+      S.sessions.unshift(s); log(`Started ${s.type} count with ${ids.length} items`); await save(); view.sel={}; return go({name:"session", id:s.id});
+    }
+    case "selshown": { view.sel=view.sel||{}; const q=(view.nq||"").toLowerCase(); S.items.filter(i=>!i.archived&&i.name.toLowerCase().includes(q)).forEach(i=>view.sel[i.id]=true); return render(); }
+    case "selnone": view.sel={}; return render();
+    case "nq": view.nq=el.value; await render(); { const i=$("#nq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); } return;
+    case "iq": view.iq=el.value; await render(); { const i=$("#iq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); } return;
+    case "importpdf": {
+      const inp=el; { const f=inp.files&&inp.files[0]; if(!f) return;
+        view.busy="Opening PDF…"; render();
+        try{ const r=await readKlinifyPdf(f,(i,n)=>{ if(i%5===0||i===n){ view.busy=`Reading page ${i} of ${n}…`; const b=$("[data-act=importpdf]"); if(b) b.textContent=view.busy; } });
+          r.file=f; view.result=r; }
+        catch(e){ toast(e.message); }
+        view.busy=""; render(); }
+      return;
+    }
+    case "importsave": {
+      const r=view.result; if(!r) return;
+      const fileId=uid("R"); await photoPut(fileId, r.file);
+      const repId=uid("K");
+      S.report={id:repId, file:fileId, printedAt:r.printedAt||now(), name:r.file.name, items:r.items.length, by:me.id, at:now()};
+      // first real import retires the fake TEST items
+      S.items.filter(i=>/^TEST /.test(i.name)&&!i.archived).forEach(i=>{ i.archived=true; });
+      let added=0, updated=0;
+      for(const ki of r.items){
+        let it=S.items.find(i=>!i.archived && i.name.toLowerCase()===ki.name.toLowerCase() && i.unit.toLowerCase()===ki.unit.toLowerCase());
+        if(!it){ it={id:uid("I"), name:ki.name, unit:ki.unit}; S.items.push(it); added++; } else updated++;
+        it.klinify={reportId:repId, total:ki.total, plusTotal:ki.plusTotal, minusRows:ki.minusRows, batches:ki.batches, printedAt:S.report.printedAt};
+      }
+      log(`Imported Klinify report ${r.file.name} (${r.items.length} items: ${added} new, ${updated} updated)`); await save();
+      view={name:"home"}; toast(`Saved ${r.items.length} items`); return render();
+    }
+    case "open": return go({name:"session", id:d.id});
+    case "srcphoto": { const p=await pickPhoto(); if(p){ const s=sess(); s.sourcePhoto=p; await save(); render(); } return; }
+    case "viewsrc": { const s=sess(); const u=await photoUrl(s.sourcePhoto); modal(`<h2>Klinify screenshot</h2><p class="muted">Checked ${fmt(s.sourceAt)}${s.scope?` · ${esc(s.scope)}`:""}</p><img src="${u}" alt="Klinify screenshot"><button data-act="mclose">Close</button>`); return; }
+    case "handover": {
+      const s=sess(); const blanks=s.lines.filter(l=>String(l.expected).trim()==="").length;
+      const bad=s.lines.find(l=>String(l.expected).trim()!=="" && toMilli(l.expected)===null);
+      if(bad){ toast(`Check the Klinify figure for ${item(bad.itemId).name}`); return; }
+      const doIt = async ()=>{ s.status="counting"; s.handedAt=now(); log(`Entered Klinify figures for ${s.type} count and handed over${blanks?` (${blanks} PROVISIONAL)`:""}`); await save(); me=null; go("home"); toast("Handed over. Pass the phone to the counter."); };
+      if(blanks) return confirmBox("Some figures are blank", `${blanks} item(s) have no Klinify figure. They will be counted but marked PROVISIONAL, not treated as zero.`, "Hand over anyway", doIt);
+      return confirmBox("Hand over for counting?","You will be signed out so the counter can sign in. You cannot change the Klinify figures after this.","Hand over", doIt);
+    }
+    // counting
+    case "countitem": return go({name:"countitem", id:view.id, i:+d.i, drafts:{}});
+    case "locphoto": { const p=await pickPhoto(); if(p){ view.drafts=view.drafts||{}; view.drafts[d.loc]={...(view.drafts[d.loc]||{}), qty:$("#q"+d.loc).value, photo:p}; render(); } return; }
+    case "savecount": {
+      const s=sess(); if(s.preparer===me.id){ toast("The preparer cannot count."); return; }
+      if(s.counter && s.counter!==me.id){ toast("Another person is counting this session."); return; }
+      const l=s.lines[view.i]; const dr=(view.drafts||{})[d.loc]||{}; const qty=$("#q"+d.loc).value.trim(); const photo=dr.photo||(l.counts[d.loc]||{}).photo;
+      if(qty===""){ toast("Enter a number. Type 0 if the place is empty."); return; }
+      const m=toMilli(qty); if(m===null||m<0){ toast("Use a number that is 0 or more."); return; }
+      if(!photo){ toast("Take a photo of the stock at this place."); return; }
+      const prev=l.counts[d.loc]; l.counts[d.loc]={qty:fromMilli(m), photo, by:me.id, at:now(), prev: prev?[...(prev.prev||[]),{qty:prev.qty,at:prev.at}]:[]};
+      s.counter=me.id; const loc=S.locations.find(x=>x.id===d.loc);
+      log(`${prev?"Changed":"Counted"} ${item(l.itemId).name} at ${loc.label}: ${fromMilli(m)}`); await save();
+      delete view.drafts[d.loc]; toast("Saved"); return render();
+    }
+    case "askfinish": return confirmBox("Finish and compare?","After this, counts are locked and the Klinify figures are shown.","Finish", async ()=>{
+      const s=sess(); if(s.preparer===me.id) return toast("The preparer cannot finish the count.");
+      s.lines.forEach(l=>{ const tot=l.locIds.reduce((a,id)=>a+toMilli(l.counts[id].qty),0); l.total=fromMilli(tot);
+        l.result = String(l.expected).trim()==="" ? "NO_SOURCE" : fromMilli(tot - toMilli(l.expected)); });
+      s.status="complete"; s.completedAt=now(); log(`Finished ${s.type} count: ${s.lines.filter(l=>l.result==="0").length}/${s.lines.length} matched`); await save(); go({name:"session", id:s.id});
+    });
+    // variance
+    case "line": return go({name:"line", id:d.sid||view.id, i:+d.i});
+    case "rc": view.rc=view.rc||{}; view.rc[d.f]=el.value; return;
+    case "rcphoto": { const p=await pickPhoto(); if(p){ view.rc=view.rc||{}; view.rc.qty=$("#rcq").value; view.rc.note=$("#rcn").value; view.rc.reason=$("#rcr").value; view.rc.photo=p; render(); } return; }
+    case "rcsubmit": {
+      const s=sess(); const l=s.lines[view.i]; const r=view.rc||{}; r.qty=$("#rcq").value.trim(); r.reason=$("#rcr").value; r.note=$("#rcn").value.trim();
+      const m=toMilli(r.qty); if(m===null||m<0) return toast("Enter the recount total (0 or more).");
+      if(!r.reason) return toast("Choose a likely reason."); if(r.reason==="Other"&&!r.note) return toast("Add details for 'Other'.");
+      if(!r.photo) return toast("Take a supporting photo.");
+      if(l.recount) l.recountHistory=[...(l.recountHistory||[]), {...l.recount, review:l.review}];
+      l.recount={qty:fromMilli(m), reason:r.reason, note:r.note, photo:r.photo, by:me.id, at:now()}; l.review={status:"pending"};
+      log(`Recounted ${item(l.itemId).name}: ${fromMilli(m)} (${r.reason})`); await save(); view.rc={}; toast("Sent to Dr Nazren"); return render();
+    }
+    case "rvnote": view.rvnote=el.value; return;
+    case "approve": {
+      const s=sess(); const l=s.lines[view.i]; const note=($("#rvn")||{}).value||"";
+      if(d.d==="return" && !note.trim()) return toast("Add a note saying what to recheck.");
+      return askAdminPin(async ()=>{
+        l.review = d.d==="return" ? {status:"returned", by:me.id, at:now(), note} : {status:"approved", decision:d.d, by:me.id, at:now(), note};
+        log(`${d.d==="return"?"Sent back":"Approved ("+(d.d==="adjust"?"adjust Klinify":"no adjustment")+")"} ${item(l.itemId).name}`); await save(); view.rvnote=""; toast("Decision saved"); render();
+      });
+    }
+    case "kref": view.kref=el.value; return;
+    case "kauth": view.kauth=el.checked; return;
+    case "saveref": {
+      const s=sess(); const l=s.lines[view.i]; const ref=$("#kref").value.trim();
+      if(!ref) return toast("Enter the Klinify reference."); if(!$("#kauth").checked) return toast("Only someone who already has Klinify adjustment rights can record this.");
+      l.review.klinifyRef=ref; l.review.refBy=me.id; l.review.refAt=now(); log(`Recorded Klinify reference ${ref} for ${item(l.itemId).name}`); await save(); toast("Reference saved"); return render();
+    }
+    // items
+    case "isearch": view.q=el.value; await render(); const i=$("#isearch"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); return;
+    case "niname": view.niname=el.value; return;
+    case "niunit": view.niunit=el.value; return;
+    case "additem": { const n=$("#niname").value.trim(), u=$("#niunit").value.trim(); if(!n||!u) return toast("Enter the item name and unit.");
+      if(S.items.some(x=>!x.archived&&x.name.toLowerCase()===n.toLowerCase())) return toast("That item already exists.");
+      const id=uid("I"); S.items.push({id,name:n,unit:u}); log(`Added item ${n} (${u})`); await save(); view.niname=view.niunit=""; toast("Item added. Now add its places."); return render(); }
+    case "addloc": return askText("Add a place", "Place name", "", async v=>{ const it=item(d.id); if(activeLocs(it.id).some(l=>l.label.toLowerCase()===v.toLowerCase())) return toast("That place already exists.");
+      S.locations.push({id:uid("L"),itemId:it.id,label:v,active:true}); log(`Added place "${v}" for ${it.name}`); await save(); render(); });
+    case "renloc": { const l=S.locations.find(x=>x.id===d.id); return askText("Rename place","Place name",l.label, async v=>{ log(`Renamed place "${l.label}" to "${v}" for ${item(l.itemId).name}`); l.label=v; await save(); render(); }); }
+    case "archloc": { const l=S.locations.find(x=>x.id===d.id); return confirmBox("Remove this place?", `${l.label} will no longer be counted for ${item(l.itemId).name}. Past counts keep it.`, "Remove", async ()=>{ l.active=false; log(`Removed place "${l.label}" for ${item(l.itemId).name}`); await save(); render(); }, true); }
+    // staff
+    case "toggleuser": { const u=S.users.find(x=>x.id===d.id); u.active = u.active===false; log(`${u.active?"Turned on":"Turned off"} ${u.name}`); await save(); return render(); }
+    case "resetpin": { const u=S.users.find(x=>x.id===d.id); return askAdminPin(async ()=>{ u.hash=u.salt=null; log(`Reset PIN for ${u.name}`); await save(); toast(`${u.name} will choose a new PIN`); render(); }); }
+    // backup
+    case "bp": return;
+    case "backup": return doBackup();
+    case "rp": return;
+    case "restore": return doRestore();
+  }
+}
+
+async function doBackup(){
+  const p1=$("#bp1").value, p2=$("#bp2").value;
+  if(p1.length<10) return toast("Use at least 10 characters."); if(p1!==p2) return toast("The two passphrases do not match.");
+  toast("Creating recovery copy…");
+  const keys = await tx("photos","readonly",s=>s.getAllKeys());
+  const photos = {};
+  for(const k of keys){ const b=await photoGet(k); photos[k]={t:b.type||"image/jpeg", d:b64(await b.arrayBuffer())}; }
+  const plain = enc.encode(JSON.stringify({app:"nc-stock-check", test:TEST_BUILD, made:now(), state:S, photos}));
+  const salt=crypto.getRandomValues(new Uint8Array(16)), iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:"AES-GCM",iv}, await aesKey(p1,salt), plain);
+  const blob = new Blob([JSON.stringify({format:"ncstock-1", test:TEST_BUILD, salt:b64(salt), iv:b64(iv), data:b64(ct)})], {type:"application/octet-stream"});
+  const name = `NC-Stock-${TEST_BUILD?"TEST-":""}${new Date().toLocaleDateString("en-CA",{timeZone:TZ})}.ncstock`;
+  const file = new File([blob], name, {type:"application/octet-stream"});
+  let shared=false;
+  try{ if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:name}); shared=true; } }catch(e){ if(e.name==="AbortError") return toast("Not saved. Try again and choose Google Drive."); }
+  if(!shared){ const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
+  S.lastBackup=now(); log(`Created recovery copy ${name}`); await save();
+  render(); toast(shared?"Choose Google Drive › Stock NC to save":"Recovery copy downloaded. Move it to Stock NC Drive.");
+}
+async function doRestore(){
+  const pass=$("#rp").value; if(!pass) return toast("Enter the passphrase first.");
+  if(S.sessions.length || S.users.some(u=>u.hash)) return toast("This app already has records. Restore only works on an empty app.");
+  const inp=document.createElement("input"); inp.type="file"; inp.className="photo-in";
+  inp.onchange = async ()=>{
+    const f=inp.files[0]; inp.remove(); if(!f) return;
+    try{
+      const box=JSON.parse(await f.text()); if(box.format!=="ncstock-1") throw new Error("Not an NC Stock recovery file.");
+      if(!!box.test!==TEST_BUILD) throw new Error("Test and clinic recovery files cannot be mixed.");
+      const plain = await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(box.iv)}, await aesKey(pass,unb64(box.salt)), unb64(box.data));
+      const obj=JSON.parse(new TextDecoder().decode(plain));
+      for(const [k,v] of Object.entries(obj.photos)){ const o=typeof v==="string"?{t:"image/jpeg",d:v}:v; await photoPut(k, new Blob([unb64(o.d)],{type:o.t})); }
+      S=obj.state; S.log.unshift({at:now(),by:"-",text:`Restored from recovery copy made ${fmt(obj.made)}`}); await save(); toast("Restored. Sign in with your usual PIN."); go("home");
+    }catch(e){ toast(e.name==="OperationError"?"Wrong passphrase or damaged file. Nothing was changed.":e.message); }
+  };
+  document.body.appendChild(inp); inp.click();
+}
+
+document.addEventListener("click", e=>{ const el=e.target.closest("[data-act]"); if(!el || el.tagName==="INPUT" || el.tagName==="SELECT" || el.tagName==="TEXTAREA") return; e.preventDefault(); act(el.dataset.act, el).catch(err=>toast(err.message)); });
+document.addEventListener("click", e=>{ if(e.target.id==="pdfin") window._picking=Date.now(); }, true);
+document.addEventListener("change", e=>{ const el=e.target; if(el.id==="pdfin"){ act("importpdf", el).catch(err=>toast(err.message)); return; } if(el.dataset && el.dataset.act && (el.type==="checkbox"||el.tagName==="SELECT")) act(el.dataset.act, el).catch(err=>toast(err.message)); });
+document.addEventListener("input", async e=>{
+  const el=e.target; if(!el.dataset||!el.dataset.act) return; const a=el.dataset.act;
+  if(view.name==="session" && me){ const s=S.sessions.find(x=>x.id===view.id); if(s && s.status==="preparing" && s.preparer===me.id){
+    if(a==="exp") s.lines[+el.dataset.i].expected=el.value.trim();
+    else if(a==="unit") s.lines[+el.dataset.i].unit=el.value.trim();
+    else if(a==="scope") s.scope=el.value;
+    else if(a==="srcat"){ s.sourceAtLocal=el.value; s.sourceAt = el.value? new Date(el.value+":00+08:00").toISOString() : null; await save(); return render(); }
+    await save(); return; } }
+  if(["rc","rvnote","kref","niname","niunit","isearch","bp","rp","nq","iq"].includes(a) && el.type!=="checkbox" && el.tagName!=="SELECT") act(a, el);
+});
+
+(async function start(){
+  try{
+    db = await openDb(); S = await kvGet("state");
+    if(!S){ S=blankState(); await save(); }
+  }catch(e){ $("#app").innerHTML = `<div class="notice bad">This browser blocked storage, so records cannot be saved here. Open the app in Chrome (not a private tab).</div>`; return; }
+  render();
+})();
+</script>
