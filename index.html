@@ -798,6 +798,52 @@ function vReview(){
   return header("Differences to review") + (list.length?list.map(({s,l,i})=>`<button class="listbtn card" data-act="line" data-sid="${s.id}" data-i="${i}"><span><b>${esc(item(l.itemId).name)}</b><br><span class="muted num">Klinify ${esc(l.expected)} · counted ${esc(l.total)} · recount ${esc(l.recount.qty)}</span><br>${lineStatus(l)}</span><span>›</span></button>`).join(""):`<p class="muted">Nothing waiting.</p>`);
 }
 
+// ---------- unit costs from a Klinify Inventory Status table copied into Excel ----------
+const normName = n => String(n||"").replace(/- (?=[a-z])/gi,"-").replace(/\s+/g," ").trim().toLowerCase();
+const cellText = v => v==null ? "" : typeof v==="object" ? (v.richText?v.richText.map(t=>t.text).join(""):v.text!=null?String(v.text):v.result!=null?String(v.result):"") : String(v);
+async function readCostWorkbook(file){
+  const ExcelJS=await loadExcelJs(); const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await file.arrayBuffer());
+  const rows=[];
+  wb.eachSheet(ws=>{
+    let col=null;
+    ws.eachRow({includeEmpty:false}, row=>{
+      const vals=[]; row.eachCell({includeEmpty:true},(c,i)=>{ vals[i]=cellText(c.value).trim(); });
+      if(!col){ const f=t=>vals.findIndex(v=>v&&v.toLowerCase()===t); const n=f("sku name"), c=f("unit cost"); if(n>0&&c>0) col={n, c, u:f("dispensation unit")}; return; }
+      const raw=vals[col.n]; if(!raw) return;
+      const name=raw.replace(/\s\(\d+\)$/,"").trim(); // Klinify adds the batch count in brackets
+      const num=Number(String(vals[col.c]||"").replace(/[^\d.\-]/g,""));
+      rows.push({name, unit: col.u>0?(vals[col.u]||""):"", cost: isFinite(num)?num:0});
+    });
+  });
+  if(!rows.length) throw new Error("No Klinify table found. The file needs the SKU Name and Unit Cost columns from Inventory Status.");
+  const active=S.items.filter(i=>!/^TEST /.test(i.name));
+  const byNU=new Map(), byN=new Map();
+  active.forEach(i=>{ byNU.set(normName(i.name)+"|"+String(i.unit||"").toLowerCase(), i); const k=normName(i.name); byN.set(k, byN.has(k)?null:i); });
+  const changes=[], same=[], zero=[], notFound=[], seen=new Set();
+  for(const r of rows){
+    const it=byNU.get(normName(r.name)+"|"+r.unit.toLowerCase()) || byN.get(normName(r.name));
+    if(!it){ notFound.push(r.name); continue; }
+    seen.add(it.id);
+    if(!(r.cost>0)){ zero.push(it.name); continue; }
+    const cost=String(Math.round(r.cost*10000)/10000);
+    if(it.unitCost===cost) same.push(it.name); else changes.push({id:it.id, name:it.name, unit:it.unit, from:it.unitCost||"", to:cost});
+  }
+  const missingFromFile=active.filter(i=>!i.archived && !seen.has(i.id)).map(i=>i.name);
+  return {file:file.name, rows:rows.length, changes, same, zero, notFound, missingFromFile};
+}
+function vCostImport(){
+  const r=view.cost;
+  return header("Import unit costs") + `<button class="link" data-act="go" data-v="items">← Back to items</button>
+  <div class="card"><h2>${r.rows} rows read</h2><p class="muted">${esc(r.file)}</p>
+  <div class="row"><span class="chip ok">${r.changes.length} to update</span><span class="chip">${r.same.length} already the same</span>${r.zero.length?`<span class="chip warn">${r.zero.length} with no cost in Klinify</span>`:""}${r.notFound.length?`<span class="chip bad">${r.notFound.length} not in the app</span>`:""}</div>
+  <p class="muted">Items Klinify shows with a unit cost of 0 are left as Cost Missing, never RM 0.00. Use the costs from Inventory Status with empty batches hidden.</p>
+  ${r.changes.length?`<button class="primary" data-act="costsave">Save ${r.changes.length} unit cost(s)</button>`:`<p>Nothing to update.</p>`}</div>
+  ${r.notFound.length?`<div class="notice warn">Not in the app yet (import a newer Klinify PDF first): ${r.notFound.map(esc).join(", ")}</div>`:""}
+  ${r.changes.length?`<div class="card" style="overflow-x:auto"><table><tr><th>Item</th><th class="num">Now</th><th class="num">New (RM)</th></tr>${r.changes.slice(0,300).map(c=>`<tr><td>${esc(c.name)}<br><span class="muted">per ${esc(c.unit)}</span></td><td class="num">${c.from?esc(c.from):"—"}</td><td class="num"><b>${esc(c.to)}</b></td></tr>`).join("")}</table></div>`:""}
+  ${r.zero.length?`<details class="card"><summary>${r.zero.length} item(s) with no unit cost in Klinify</summary><p class="muted">${r.zero.map(esc).join(", ")}</p></details>`:""}
+  ${r.missingFromFile.length?`<details class="card"><summary>${r.missingFromFile.length} app item(s) not in this file</summary><p class="muted">${r.missingFromFile.map(esc).join(", ")}</p></details>`:""}`;
+}
+
 function vItems(){
   const q=(view.q||"").toLowerCase(); const mgr=can("items"); const sel=view.isel||{}; const picking=mgr&&view.ipick;
   const all=S.items.filter(i=>!i.archived && i.name.toLowerCase().includes(q)); const items=all.slice(0,60);
@@ -805,6 +851,7 @@ function vItems(){
   const archived=S.items.filter(i=>i.archived && (i.archivedInfo || !/^TEST /.test(i.name))); // sample items retired by the first import stay hidden
   return header("Items & places") + `
   <input id="isearch" data-act="isearch" placeholder="Search items" value="${esc(view.q||"")}" aria-label="Search items">
+  ${mgr?(view.busy?`<button class="full" disabled>${esc(view.busy)}</button>`:`<label class="btn pick">Import unit costs (Klinify Excel copy)<input type="file" id="costin" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>`):""}
   ${mgr?`<div class="row">${picking?`<button class="link" data-act="iselshown">Select all shown (${all.length})</button> · <button class="link" data-act="iselnone">Clear</button> · <button class="link" data-act="ipick">Done</button>`:`<button class="link" data-act="ipick">Select several items</button>`}</div>`:""}
   ${picking&&nsel?`<div class="card"><b>${nsel} item(s) selected</b><div class="row"><button style="flex:1" data-act="bulkcat">Set category</button><button style="flex:1" class="danger" data-act="bulkarch">Archive</button></div></div>`:""}
   ${items.map(i=>`<div class="card"><div class="row between">${picking?`<label class="check"><input type="checkbox" data-act="isel" data-id="${i.id}" ${sel[i.id]?"checked":""}> <b>${esc(i.name)}</b></label>`:`<b>${esc(i.name)}</b>`}<span class="muted">${esc(i.unit)}</span></div>
@@ -862,8 +909,8 @@ async function render(){
     let h;
     if(!me){ h = view.name==="pin"?vPin():view.name==="restore"?vRestore():vLogin(); }
     else{
-      const f={import:vImport,home:vHome,new:vNew,session:vSession,countitem:vCountItem,line:vLine,review:vReview,items:vItems,activity:vActivity,staff:vStaff,backup:vBackup,history:vHistory,task:vTask,assign:vAssign}[view.name]||vHome;
-      const need={import:"import",new:"prepare",assign:"assign",staff:"users",activity:"admin-only",backup:"admin-only"}[view.name];
+      const f={import:vImport,home:vHome,new:vNew,session:vSession,countitem:vCountItem,line:vLine,review:vReview,items:vItems,activity:vActivity,staff:vStaff,backup:vBackup,history:vHistory,task:vTask,assign:vAssign,costimport:vCostImport}[view.name]||vHome;
+      const need={costimport:"items",import:"import",new:"prepare",assign:"assign",staff:"users",activity:"admin-only",backup:"admin-only"}[view.name];
       if(need && !can(need)) h=vHome(); else h=await f();
     }
     app.innerHTML = h;
@@ -1098,6 +1145,17 @@ async function act(a, el){
     case "bulkcat": { if(!can("items")) return; const ids=Object.keys(view.isel||{}).filter(k=>view.isel[k]); if(!ids.length) return;
       return askCategory(`Set category for ${ids.length} item(s)`, "", async v=>{ ids.forEach(id=>{ const it=item(id); if(it) it.category=v; }); log(`Set category "${v}" for ${ids.length} item(s)`); await save(); view.isel={}; toast("Category saved"); render(); }); }
     case "editdetails": return editDetails(d.id);
+    case "costfile": {
+      if(!can("items")) return; const f=el.files&&el.files[0]; if(!f) return;
+      view.busy="Reading the Excel file…"; await render();
+      try{ const r=await readCostWorkbook(f); view={name:"costimport", cost:r}; }
+      catch(e){ view.busy=""; toast(e.message); }
+      view.busy=""; return render(); }
+    case "costsave": {
+      if(!can("items") || !view.cost) return; const r=view.cost; const src=`Klinify Inventory Status (${r.file})`;
+      for(const c of r.changes){ const it=item(c.id); if(!it) continue; it.unitCost=c.to; it.costSource=src; it.costAt=now(); it.costBy=me.id; }
+      log(`Imported unit costs from ${r.file}: ${r.changes.length} updated, ${r.zero.length} left as cost missing, ${r.notFound.length} not in the app`); await save();
+      toast(`${r.changes.length} unit cost(s) saved`); return go("items"); }
     case "restoreitem": { if(!can("items")) return; const it=item(d.id);
       return confirmBox("Restore this item?", `${it.name} goes back on the active list and can be counted again.`, "Restore", async ()=>{ it.archived=false; it.restoredInfo={by:me.id, at:now(), was:it.status}; delete it.status;
         log(`Restored item ${it.name}`); await save(); toast("Restored"); render(); }); }
@@ -1136,11 +1194,13 @@ function editDetails(id){
   modal(`<h2>${esc(it.name)}</h2><label for="dcat">Category<input id="dcat" list="catlist" value="${esc(it.category||"")}"></label><datalist id="catlist">${categoryList().map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
   <label for="dstr">Strength / specification<input id="dstr" value="${esc(it.strength||"")}"></label>
   <label for="dcost">Unit cost (RM per ${esc(it.unit)})<input id="dcost" inputmode="decimal" value="${esc(it.unitCost||"")}" placeholder="Leave blank if not known"></label>
+  ${it.costSource?`<p class="muted">Last set from ${esc(it.costSource)} · ${fmt(it.costAt)}</p>`:""}
   <div id="merr"></div><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Save</button></div>`);
   window._mok = async ()=>{
     const cat=$("#dcat").value.trim()||"Uncategorised", str=$("#dstr").value.trim(), cost=$("#dcost").value.trim().replace(/^RM\s*/i,"");
     if(cost && costTT(cost)===null) return $("#merr").innerHTML=`<div class="notice bad">Unit cost must be a number, for example 0.35 or 12.50.</div>`;
     const ch=[]; if(cat!==it.category) ch.push(`category "${cat}"`); if(str!==(it.strength||"")) ch.push(`strength "${str}"`); if(cost!==(it.unitCost||"")) ch.push(`unit cost ${cost?"RM "+cost:"cleared"}`);
+    if(cost!==(it.unitCost||"")){ it.costSource="typed in the app"; it.costAt=now(); it.costBy=me.id; }
     it.category=cat; it.strength=str; it.unitCost=cost; closeModal();
     if(ch.length){ log(`Changed ${it.name}: ${ch.join(", ")}`); await save(); toast("Saved"); } render(); };
 }
@@ -1215,8 +1275,9 @@ async function doRestore(){
 }
 
 document.addEventListener("click", e=>{ const el=e.target.closest("[data-act]"); if(!el || el.tagName==="INPUT" || el.tagName==="SELECT" || el.tagName==="TEXTAREA") return; e.preventDefault(); act(el.dataset.act, el).catch(err=>toast(err.message)); });
-document.addEventListener("click", e=>{ if(e.target.id==="pdfin") window._picking=Date.now(); }, true);
-document.addEventListener("change", e=>{ const el=e.target; if(el.id==="pdfin"){ act("importpdf", el).catch(err=>toast(err.message)); return; } if(el.dataset && el.dataset.act && (el.type==="checkbox"||el.tagName==="SELECT")) act(el.dataset.act, el).catch(err=>toast(err.message)); });
+document.addEventListener("click", e=>{ if(e.target.id==="pdfin"||e.target.id==="costin") window._picking=Date.now(); }, true);
+document.addEventListener("change", e=>{ const el=e.target; if(el.id==="pdfin"){ act("importpdf", el).catch(err=>toast(err.message)); return; }
+  if(el.id==="costin"){ act("costfile", el).catch(err=>toast(err.message)); return; } if(el.dataset && el.dataset.act && (el.type==="checkbox"||el.tagName==="SELECT")) act(el.dataset.act, el).catch(err=>toast(err.message)); });
 document.addEventListener("input", async e=>{
   const el=e.target; if(!el.dataset||!el.dataset.act) return; const a=el.dataset.act;
   if(view.name==="session" && me){ const s=S.sessions.find(x=>x.id===view.id); if(s && s.status==="preparing" && s.preparer===me.id){
