@@ -96,9 +96,13 @@ const AWAY_MS = 2*60*1000;      // logout if app was in background longer than t
 const TZ = "Asia/Kuching";
 const USERS = [
   {id:"naz", name:"Dr Nazren", role:"admin"},
-  {id:"dom", name:"Dom", role:"staff"},
-  {id:"ester", name:"Ester", role:"staff"}
+  {id:"dom", name:"Dom", role:"manager"},
+  {id:"ester", name:"Ester", role:"manager"}
 ];
+const ROLE_LABEL = {admin:"Admin", manager:"Stock manager", staff:"Staff"};
+// what each role may do; the admin may do everything
+const PERMS = {manager:["import","prepare","assign","verify","finish","items","users","export"], staff:[]};
+const ARCHIVE_STATUSES = ["Discontinued","Not in use","Archived","Duplicate entry"];
 const SEED_ITEMS = [
   ["TEST Paracetamol 500mg tablet","TABLET",["Dispensary Shelf A","Dispensary Shelf B"]],
   ["TEST Amoxicillin 250mg capsule","CAPSULE",["Dispensary Shelf A"]],
@@ -142,7 +146,22 @@ function blankState(){
     const id="I"+(i+1); items.push({id,name,unit});
     locs.forEach((label,j)=>locations.push({id:id+"L"+(j+1),itemId:id,label,active:true}));
   });
-  return {v:1, users:USERS.map(u=>({...u,salt:null,hash:null})), items, locations, sessions:[], log:[]};
+  return migrate({v:1, users:USERS.map(u=>({...u,salt:null,hash:null})), items, locations, sessions:[], log:[]});
+}
+// bring records saved by an older version up to date without losing anything
+function migrate(st){
+  if(!st.v || st.v<2){ st.users.forEach(u=>{ if((u.id==="dom"||u.id==="ester") && u.role==="staff") u.role="manager"; }); st.v=2; }
+  st.finals ||= []; st.removed ||= [];
+  st.sessions.forEach(x=>{ x.tasks ||= []; });
+  st.items.forEach(i=>{ if(i.strength===undefined) i.strength=guessStrength(i.name); if(!i.category) i.category="Uncategorised"; });
+  return st;
+}
+// strength or size written in the item name, e.g. "500mg", "250mg/5ml", "1%W/W", "5CMX4.5CM"
+function guessStrength(name){
+  const n=String(name||"");
+  const size=n.match(/\d+(?:\.\d+)?\s?cm\s?x\s?\d+(?:\.\d+)?\s?(?:cm|m)\b/i); if(size) return size[0];
+  const re=/\d+(?:\.\d+)?\s?(?:mg|mcg|µg|gm|g|ml|iu|units?|%)(?:\s?\/\s?\d*(?:\.\d+)?\s?(?:mg|mcg|g|ml|dose|tab))?(?:\s?w\/[wv])?(?![a-z])/gi;
+  return (n.match(re)||[]).join(" / ");
 }
 
 // ---------- helpers ----------
@@ -152,6 +171,25 @@ const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(
 const now = () => new Date().toISOString();
 function fmt(iso){ if(!iso) return ""; return new Date(iso).toLocaleString("en-GB",{timeZone:TZ,day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}); }
 const userName = id => (S.users.find(u=>u.id===id)||{}).name || id;
+const can = perm => !!me && (me.role==="admin" || (PERMS[me.role]||[]).includes(perm));
+const liveTasks = s => (s.tasks||[]).filter(t=>!t.cancelled);
+const taskOf = (s,i,loc) => liveTasks(s).find(t=>t.slots.some(x=>x.i===i && x.loc===loc));
+const freeLocs = (s,i) => s.lines[i].locIds.filter(loc=>!taskOf(s,i,loc));
+function taskStatus(s,t){
+  if(t.verifiedAt) return "Verified"; if(t.submittedAt) return "Submitted";
+  return t.slots.some(x=>s.lines[x.i].counts[x.loc]) ? "In progress" : "Pending";
+}
+const TASK_CHIP = {"Pending":"", "In progress":"teal", "Submitted":"warn", "Verified":"ok"};
+function canCountSlot(s,i,loc){
+  if(!me || s.status!=="counting" || me.id===s.preparer) return false;
+  const t=taskOf(s,i,loc); if(t) return t.assignee===me.id && !t.submittedAt;
+  const c=s.lines[i].counts[loc]; return !c || c.by===me.id;
+}
+const countersOf = s => [...new Set(s.lines.flatMap(l=>Object.values(l.counts).map(c=>c.by)).filter(Boolean))];
+const namesOf = ids => ids.map(userName).join(", ");
+const lineClosed = l => l.result==="0" || l.result==="NO_SOURCE" || !!(l.review && l.review.status==="approved");
+const finalQty = l => (l.recount && l.review && l.review.status==="approved") ? l.recount.qty : l.total;
+const dmy = iso => fmt(iso).slice(0,10);
 const item = id => S.items.find(i=>i.id===id);
 const activeLocs = itemId => S.locations.filter(l=>l.itemId===itemId && l.active);
 function log(text){ S.log.unshift({at:now(), by:me?me.id:"-", text}); if(S.log.length>2000) S.log.length=2000; }
@@ -367,7 +405,7 @@ function vLogin(){
   const noPins = S.users.every(u=>!u.hash);
   return header("Who is using the phone?", false).replace('<h1>','<img class="biglogo" src="'+LOGO+'" alt=""><h1>') + `
   <div class="users">${S.users.filter(u=>u.role==="admin"||u.active!==false).map(u=>`
-    <button class="listbtn" data-act="pickuser" data-id="${u.id}"><span><b>${esc(u.name)}</b><br><span class="muted">${u.role==="admin"?"Admin":"Stock manager"}</span></span><span class="chip ${u.hash?"teal":"warn"}">${u.hash?"Enter PIN":"Set PIN"}</span></button>`).join("")}
+    <button class="listbtn" data-act="pickuser" data-id="${u.id}"><span><b>${esc(u.name)}</b><br><span class="muted">${ROLE_LABEL[u.role]||u.role}</span></span><span class="chip ${u.hash?"teal":"warn"}">${u.hash?"Enter PIN":"Set PIN"}</span></button>`).join("")}
   </div>
   ${noPins&&S.sessions.length===0?`<div class="card"><p class="muted">Setting up a new phone? You can restore an encrypted recovery copy instead.</p><button data-act="go" data-v="restore">Restore from recovery copy</button></div>`:""}`;
 }
@@ -388,21 +426,27 @@ function vHome(){
   const refNeeded = S.sessions.flatMap(s=>s.lines).filter(l=>l.review&&l.review.status==="approved"&&l.review.decision==="adjust"&&!l.review.klinifyRef).length;
   const open = S.sessions.filter(s=>s.status!=="complete" || s.lines.some(l=>l.result && l.result!=="0" && l.result!=="NO_SOURCE" && !(l.review&&l.review.status==="approved"&&(l.review.decision!=="adjust"||l.review.klinifyRef))));
   const closed = S.sessions.filter(s=>!open.includes(s));
+  const myTasks = S.sessions.filter(s=>s.status==="counting").flatMap(s=>liveTasks(s).filter(t=>t.assignee===me.id && !t.verifiedAt).map(t=>({s,t})));
+  const toCheck = can("verify") ? S.sessions.filter(s=>s.status==="counting").flatMap(s=>liveTasks(s).filter(t=>t.submittedAt && !t.verifiedAt && t.assignee!==me.id).map(t=>({s,t}))) : [];
+  const taskBtn = ({s,t})=>{ const st=taskStatus(s,t); const done=t.slots.filter(x=>s.lines[x.i].counts[x.loc]).length;
+    return `<button class="listbtn card" data-act="opentask" data-id="${s.id}" data-t="${t.id}"><span class="stack" style="gap:6px;flex:1;min-width:0"><b>${esc(t.label)}</b><span class="muted">${esc(s.type)} count · ${done}/${t.slots.length} places${t.assignee!==me.id?` · ${esc(userName(t.assignee))}`:""}</span></span><span class="chip ${TASK_CHIP[st]}">${st}</span></button>`; };
   const card = s=>{
     const p=progress(s); const pct=p.total?Math.round(100*p.done/p.total):0;
     const st = s.status==="preparing"?`<span class="chip">Klinify figures being entered</span>`:s.status==="counting"?`<span class="chip teal">Counting · ${p.done}/${p.total} places</span>`:`<span class="chip ok">Count finished</span>`;
-    return `<button class="listbtn card" data-act="open" data-id="${s.id}"><span class="stack" style="gap:6px;flex:1;min-width:0"><b>${esc(s.type)} count · ${fmt(s.createdAt).slice(0,10)}</b><span>${st}</span><span class="muted">${s.lines.length} items · prepared by ${esc(userName(s.preparer))}${s.counter?` · counted by ${esc(userName(s.counter))}`:""}</span>${s.status==="counting"?`<span class="bar"><i style="width:${pct}%"></i></span>`:""}</span><span aria-hidden="true">›</span></button>`;
+    return `<button class="listbtn card" data-act="open" data-id="${s.id}"><span class="stack" style="gap:6px;flex:1;min-width:0"><b>${esc(s.type)} count · ${fmt(s.createdAt).slice(0,10)}</b><span>${st}</span><span class="muted">${s.lines.length} items · prepared by ${esc(userName(s.preparer))}${countersOf(s).length?` · counted by ${esc(namesOf(countersOf(s)))}`:""}${liveTasks(s).length?` · ${liveTasks(s).length} task(s)`:""}</span>${s.status==="counting"?`<span class="bar"><i style="width:${pct}%"></i></span>`:""}</span><span aria-hidden="true">›</span></button>`;
   };
   return header(`Hello, ${me.name}`, false) + `
   ${me.role==="admin"&&(pendingReview||refNeeded)?`<button class="listbtn card" data-act="go" data-v="review"><span><b>Differences to review</b><br><span class="muted">${pendingReview} waiting for your approval${refNeeded?` · ${refNeeded} need a Klinify reference`:""}</span></span><span class="chip warn num">${pendingReview+refNeeded}</span></button>`:""}
   ${me.role!=="admin"&&refNeeded?`<div class="notice warn">${refNeeded} approved adjustment(s) need the Klinify reference recorded. Open the count to add it.</div>`:""}
-  <button class="primary full" data-act="go" data-v="new">Start a new count</button>
-  <button class="full" data-act="go" data-v="import">Import Klinify report (PDF)</button>
+  ${toCheck.length?`<h2>Tasks to check</h2>${toCheck.map(taskBtn).join("")}`:""}
+  ${myTasks.length?`<h2>My counting tasks</h2>${myTasks.map(taskBtn).join("")}`:""}
+  ${can("prepare")?`<button class="primary full" data-act="go" data-v="new">Start a new count</button>`:""}
+  ${can("import")?`<button class="full" data-act="go" data-v="import">Import Klinify report (PDF)</button>`:""}
   <h2>Open counts</h2>
-  ${open.length?open.map(card).join(""):`<p class="muted">No open counts. Tap "Start a new count" to begin.</p>`}
+  ${open.length?open.map(card).join(""):`<p class="muted">No open counts.${can("prepare")?` Tap "Start a new count" to begin.`:""}</p>`}
   <div class="row"><button style="flex:1" data-act="go" data-v="items">Items &amp; places</button><button style="flex:1" data-act="go" data-v="history">Past counts${closed.length?` (${closed.length})`:""}</button></div>
   ${me.role==="admin"?`<div class="row"><button style="flex:1" data-act="go" data-v="backup">Recovery copy</button><button style="flex:1" data-act="go" data-v="activity">Activity log</button></div>`:""}
-  ${me.role==="admin"?`<button data-act="go" data-v="staff">Dom / Ester access</button>`:""}
+  ${can("users")?`<button data-act="go" data-v="staff">Staff &amp; access</button>`:""}
   ${TEST_BUILD&&me.role==="admin"?`<button class="danger" data-act="askreset">Erase all test data</button>`:""}`;
 }
 
@@ -431,7 +475,7 @@ function vImport(){
 
 function vHistory(){
   const done = S.sessions.filter(s=>s.status==="complete");
-  return header("Past counts") + (done.length?done.map(s=>`<button class="listbtn card" data-act="open" data-id="${s.id}"><span><b>${esc(s.type)} · ${fmt(s.createdAt).slice(0,10)}</b><br><span class="muted">${s.lines.length} items · ${s.lines.filter(l=>l.result==="0").length} matched</span></span><span>›</span></button>`).join(""):`<p class="muted">No finished counts yet.</p>`);
+  return header("Past counts") + (done.length?done.map(s=>`<button class="listbtn card" data-act="open" data-id="${s.id}"><span><b>${esc(s.type)} · ${fmt(s.createdAt).slice(0,10)}</b><br><span class="muted">${s.lines.length} items · ${s.lines.filter(l=>l.result==="0").length} matched</span>${S.finals.some(f=>f.sessionId===s.id)?`<br><span class="chip ok">Valuation finalised</span>`:""}</span><span>›</span></button>`).join(""):`<p class="muted">No finished counts yet.</p>`);
 }
 
 function vNew(){
@@ -476,15 +520,28 @@ async function vSession(){
     <button class="primary full" data-act="handover" ${ready?"":"disabled"}>Hand over for counting</button>`;
   }
   if(s.status==="counting"){
-    const p=progress(s);
-    if(isPrep) return header(`${s.type} count`) + `<div class="notice">You entered the Klinify figures, so someone else must count. Sign out and pass the phone to Dom, Ester or Dr Nazren.</div><p class="muted">${p.done} of ${p.total} places counted so far.</p>`;
-    if(s.counter && s.counter!==me.id) return header(`${s.type} count`) + `<div class="notice">${esc(userName(s.counter))} is counting this. Only one person counts each session.</div>`;
-    return header(`Count the stock`) + `
-    <div class="notice">Klinify figures are hidden until you finish. Count what is really there.</div>
-    <div class="card"><div class="row between"><b>${p.done} of ${p.total} places counted</b><span class="muted">${Math.round(100*p.done/(p.total||1))}%</span></div><div class="bar"><i style="width:${Math.round(100*p.done/(p.total||1))}%"></i></div></div>
-    ${s.lines.map((l,i)=>{ const d=l.locIds.filter(id=>l.counts[id]).length; return `<button class="listbtn card" data-act="countitem" data-i="${i}"><span><b>${esc(item(l.itemId).name)}</b><br><span class="muted">${d}/${l.locIds.length} places · unit ${esc(l.unit)}</span></span><span class="chip ${d===l.locIds.length?"ok":d?"teal":""}">${d===l.locIds.length?"Done":d?"Started":"To do"}</span></button>`; }).join("")}
-    <button class="primary full" data-act="askfinish" ${p.done===p.total&&p.total>0?"":"disabled"}>Finish count and compare</button>
-    ${p.done<p.total?`<p class="muted">Finish unlocks when every place has a number and a photo.</p>`:""}`;
+    const p=progress(s); const tasks=liveTasks(s);
+    const freeTotal=s.lines.reduce((a,l,i)=>a+freeLocs(s,i).length,0);
+    const allVerified=tasks.every(t=>t.verifiedAt);
+    let h = header(isPrep||!freeTotal?`${s.type} count`:`Count the stock`);
+    h += `<div class="card"><div class="row between"><b>${p.done} of ${p.total} places counted</b><span class="muted">${Math.round(100*p.done/(p.total||1))}%</span></div><div class="bar"><i style="width:${Math.round(100*p.done/(p.total||1))}%"></i></div></div>`;
+    if(isPrep) h += `<div class="notice">You entered the Klinify figures, so someone else must count.${can("assign")?" You can still assign counting tasks and check them.":" Sign out and pass the phone to another person."}</div>`;
+    if(tasks.length || can("assign")){
+      h += `<div class="card"><div class="row between"><h2>Counting tasks</h2>${can("assign")&&freeTotal?`<button data-act="assign">+ Assign</button>`:""}</div>
+      ${tasks.map(t=>{ const st=taskStatus(s,t); const done=t.slots.filter(x=>s.lines[x.i].counts[x.loc]).length; return `<button class="listbtn" data-act="opentask" data-id="${s.id}" data-t="${t.id}"><span><b>${esc(t.label)}</b><br><span class="muted">${esc(userName(t.assignee))} · ${done}/${t.slots.length} places</span></span><span class="chip ${TASK_CHIP[st]}">${st}</span></button>`; }).join("")||`<p class="muted">No tasks yet. Assign places to staff, or count them yourself below.</p>`}
+      ${can("assign")&&freeTotal?`<p class="muted">${freeTotal} place(s) not assigned to anyone.</p>`:""}</div>`;
+    }
+    if(!isPrep && freeTotal){
+      h += `<div class="notice">Klinify figures are hidden until you finish. Count what is really there.</div>
+      ${tasks.length?`<h2>Places not assigned</h2>`:""}
+      ${s.lines.map((l,i)=>{ const fl=freeLocs(s,i); if(!fl.length) return ""; const d=fl.filter(id=>l.counts[id]).length; return `<button class="listbtn card" data-act="countitem" data-i="${i}"><span><b>${esc(item(l.itemId).name)}</b><br><span class="muted">${d}/${fl.length} places · unit ${esc(l.unit)}</span></span><span class="chip ${d===fl.length?"ok":d?"teal":""}">${d===fl.length?"Done":d?"Started":"To do"}</span></button>`; }).join("")}`;
+    }
+    if(can("finish") && !isPrep){
+      const ready=p.done===p.total&&p.total>0&&allVerified;
+      h += `<button class="primary full" data-act="askfinish" ${ready?"":"disabled"}>Finish count and compare</button>
+      ${ready?"":`<p class="muted">Finish unlocks when every place has a number and a photo${tasks.length?" and every task is verified":""}.</p>`}`;
+    } else if(!can("finish") && p.done===p.total) h += `<p class="muted">All places are counted. A stock manager or Dr Nazren will finish and compare.</p>`;
+    return h;
   }
   // complete
   const rows = await Promise.all(s.lines.map(async (l,i)=>{
@@ -495,24 +552,203 @@ async function vSession(){
   const m = s.lines.filter(l=>l.result==="0").length, v=s.lines.filter(l=>l.result&&l.result!=="0"&&l.result!=="NO_SOURCE").length, pr=s.lines.filter(l=>l.result==="NO_SOURCE").length;
   return header(`${s.type} count result`) + `
   <div class="card"><div class="row"><span class="chip ok">${m} match</span><span class="chip bad">${v} difference</span>${pr?`<span class="chip warn">${pr} provisional</span>`:""}</div>
-  <p class="muted">Prepared by ${esc(userName(s.preparer))} · counted by ${esc(userName(s.counter))} · finished ${fmt(s.completedAt)}</p>
+  <p class="muted">Prepared by ${esc(userName(s.preparer))} · counted by ${esc(namesOf(countersOf(s)))} · finished ${fmt(s.completedAt)}${s.finishedBy?` by ${esc(userName(s.finishedBy))}`:""}</p>
   ${s.sourcePhoto?`<button class="link" data-act="viewsrc">View Klinify screenshot</button>`:""}${s.reportFile?`<p class="muted">Source: Klinify report printed ${fmt(s.sourceAt)}</p>`:""}</div>
+  ${valuationCard(s)}
   ${rows.join("")}`;
+}
+
+// ---------- final valuation for Accounts ----------
+function costTT(c){ const m=String(c||"").trim().match(/^(\d+)(?:\.(\d{1,4}))?$/); return m? BigInt(m[1])*10000n+BigInt((m[2]||"").padEnd(4,"0")) : null; }
+// value in sen from a quantity (3 decimals) and a unit cost (4 decimals), rounded half up
+function valueSen(qty, cost){ const ct=costTT(cost), qm=toMilli(qty); if(ct===null||qm===null) return null; const prod=BigInt(qm)*ct; return Number((prod*2n+100000n)/200000n); }
+const money = sen => (sen/100).toLocaleString("en-MY",{minimumFractionDigits:2, maximumFractionDigits:2});
+function nearestExpiry(batches){
+  const ds=(batches||[]).filter(b=>DATE_RE.test(b.expiry||"")).map(b=>({b, key:b.expiry.split("/").reverse().join("")})).filter(x=>x.key<"20990101");
+  const withStock=ds.filter(x=>NUM_RE.test(x.b.count||"") && !String(x.b.count).startsWith("-") && toMilli(String(x.b.count).replace(/,/g,""))>0);
+  const pool=withStock.length?withStock:ds; if(!pool.length) return "";
+  return pool.sort((a,b)=>a.key<b.key?-1:1)[0].b.expiry;
+}
+function valuationCard(s){
+  const fin=S.finals.find(f=>f.sessionId===s.id);
+  if(fin) return `<div class="card"><h2>Final stock valuation</h2><p class="muted">Finalised by ${esc(userName(fin.by))} · ${fmt(fin.at)} · ${esc(fin.period)}</p>
+    <p><b class="num">RM ${money(fin.totalSen)}</b> <span class="muted">for ${fin.rows.length-fin.missing} item(s) with a unit cost</span></p>${fin.missing?`<div class="notice warn">${fin.missing} item(s) cost missing, not counted in the total</div>`:""}
+    ${can("export")?`<button class="primary" data-act="exportxlsx" data-f="${fin.id}">Export Excel for Accounts</button>`:""}</div>`;
+  if(!can("export")) return "";
+  const open=s.lines.filter(l=>!lineClosed(l)).length;
+  return `<div class="card"><h2>Final stock valuation</h2>${open?`<p class="muted">${open} item(s) still need a recount or Dr Nazren's decision before this count can be finalised for Accounts.</p>`:`<p class="muted">Saves the verified quantities and current unit costs as a fixed record for Accounts.</p><button class="primary" data-act="finalise">Finalise for Accounts</button>`}</div>`;
+}
+function buildFinal(s, period){
+  const rows=[]; let skipped=0;
+  s.lines.forEach((l,i)=>{
+    const it=item(l.itemId); if(!it || it.archived){ skipped++; return; }
+    const approved=l.review&&l.review.status==="approved";
+    const counters=[...new Set(l.locIds.map(id=>(l.counts[id]||{}).by).concat(approved&&l.recount?[l.recount.by]:[]).filter(Boolean))];
+    let verifiers=liveTasks(s).filter(t=>t.slots.some(x=>x.i===i)).map(t=>t.verifiedBy).filter(Boolean);
+    if(approved) verifiers.push(l.review.by);
+    if(!verifiers.length && s.finishedBy) verifiers.push(s.finishedBy);
+    rows.push({name:it.name, category:it.category||"Uncategorised", strength:it.strength||"", unit:l.unit,
+      locations:l.locIds.map(id=>(S.locations.find(o=>o.id===id)||{}).label).filter(Boolean).join("; "),
+      qty:finalQty(l), unitCost:it.unitCost||"", expiry:nearestExpiry(l.batches), countedBy:namesOf(counters), verifiedBy:namesOf([...new Set(verifiers)])});
+  });
+  rows.sort((a,b)=>a.category.localeCompare(b.category)||a.name.localeCompare(b.name));
+  let totalSen=0, missing=0; rows.forEach(r=>{ const v=valueSen(r.qty,r.unitCost); if(v===null) missing++; else totalSen+=v; });
+  return {id:uid("F"), sessionId:s.id, at:now(), by:me.id, period, countType:s.type, countDate:s.createdAt, rows, totalSen, missing, skipped, test:TEST_BUILD};
+}
+const EXCELJS = ["https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js","https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"];
+async function loadExcelJs(){
+  if(window.ExcelJS) return window.ExcelJS;
+  for(const u of EXCELJS){ try{ await loadScript(u); if(window.ExcelJS) return window.ExcelJS; }catch(e){} }
+  throw new Error("Could not load the Excel maker. Check the internet connection and try again.");
+}
+async function makeWorkbook(fin){
+  const ExcelJS=await loadExcelJs();
+  const wb=new ExcelJS.Workbook(); wb.creator="NC Stock Manager"; wb.created=new Date();
+  const RM='"RM" #,##0.00', QTY='#,##0.###', bold={bold:true};
+  const sumWs=wb.addWorksheet("Accounts Summary"), ws=wb.addWorksheet("Stock Valuation");
+  const title=`Nazren's Clinic: Final Stock Valuation${fin.test?" (TEST VERSION, not an official record)":""}`;
+  const info=[["Stock-take date", dmy(fin.at)],["Reporting period", fin.period],["Count", `${fin.countType} count started ${dmy(fin.countDate)}`],["Finalised by", `${userName(fin.by)} on ${fmt(fin.at)}`]];
+  // valuation sheet
+  ws.getCell("A1").value=title; ws.getCell("A1").font={bold:true,size:14};
+  info.forEach(([k,v],j)=>{ ws.getCell(3+j,1).value=k; ws.getCell(3+j,1).font=bold; ws.getCell(3+j,2).value=v; });
+  const H=["Item Number","Medication / Stock Item Name","Category","Strength / Specification","Unit of Measurement","Storage Location","Final Verified Quantity","Unit Cost (RM)","Total Stock Value (RM)","Expiry Date","Counted By","Verified By","Date of Finalisation","Cost Status"];
+  const hr=8; ws.getRow(hr).values=H; ws.getRow(hr).font=bold; ws.getRow(hr).alignment={wrapText:true,vertical:"top"};
+  ws.getRow(hr).eachCell(c=>{ c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFDDF1F2"}}; c.border={bottom:{style:"thin"}}; });
+  [10,40,18,18,14,24,14,14,18,12,18,18,14,14].forEach((w,j)=>ws.getColumn(j+1).width=w);
+  let r=hr+1, no=0; const subRows=[], cats=[];
+  const byCat={}; fin.rows.forEach(x=>(byCat[x.category] ||= []).push(x));
+  for(const cat of Object.keys(byCat)){
+    const first=r; let catSen=0, catMissing=0;
+    for(const x of byCat[cat]){
+      no++; const v=valueSen(x.qty,x.unitCost); if(v===null) catMissing++; else catSen+=v;
+      const row=ws.getRow(r);
+      row.values=[no, x.name, x.category, x.strength, x.unit, x.locations, Number(x.qty), x.unitCost===""?null:Number(x.unitCost), null, x.expiry, x.countedBy, x.verifiedBy, dmy(fin.at), null];
+      row.getCell(9).value={formula:`IF(H${r}="","",G${r}*H${r})`, result: v===null?"":v/100};
+      row.getCell(14).value={formula:`IF(H${r}="","Cost Missing","")`, result: v===null?"Cost Missing":""};
+      if(v===null) row.getCell(14).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFCEFD9"}};
+      row.getCell(7).numFmt=QTY; row.getCell(8).numFmt='"RM" #,##0.00##'; row.getCell(9).numFmt=RM;
+      r++;
+    }
+    const sr=ws.getRow(r); sr.getCell(2).value=`Subtotal: ${cat}`; sr.getCell(9).value={formula:`SUM(I${first}:I${r-1})`, result:catSen/100}; sr.getCell(9).numFmt=RM;
+    sr.getCell(14).value={formula:`IF(COUNTIF(N${first}:N${r-1},"Cost Missing")>0,COUNTIF(N${first}:N${r-1},"Cost Missing")&" cost missing","")`, result: catMissing?`${catMissing} cost missing`:""};
+    sr.font=bold; sr.eachCell(c=>c.border={top:{style:"thin"}});
+    subRows.push(r); cats.push({cat, n:byCat[cat].length, first, last:r-1, sub:r, sen:catSen, missing:catMissing}); r+=2;
+  }
+  const gr=ws.getRow(r); gr.getCell(2).value="GRAND TOTAL (RM)";
+  gr.getCell(9).value={formula: subRows.length?subRows.map(x=>`I${x}`).join("+"):"0", result: fin.totalSen/100}; gr.getCell(9).numFmt=RM; gr.font={bold:true,size:12};
+  ws.views=[{state:"frozen", ySplit:hr}]; ws.autoFilter={from:{row:hr,column:1}, to:{row:hr,column:H.length}};
+  ws.pageSetup={orientation:"landscape", fitToPage:true, fitToWidth:1, fitToHeight:0};
+  // summary sheet
+  sumWs.getCell("A1").value=title; sumWs.getCell("A1").font={bold:true,size:14};
+  info.concat([["Exported", `${fmt(now())} by ${userName(me.id)}`]]).forEach(([k,v],j)=>{ sumWs.getCell(3+j,1).value=k; sumWs.getCell(3+j,1).font=bold; sumWs.getCell(3+j,2).value=v; });
+  const th=10; sumWs.getRow(th).values=["Category","Items","Items with cost missing","Stock value (RM)"]; sumWs.getRow(th).font=bold;
+  sumWs.getRow(th).eachCell(c=>{ c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFDDF1F2"}}; c.border={bottom:{style:"thin"}}; });
+  [32,10,22,20].forEach((w,j)=>sumWs.getColumn(j+1).width=w);
+  let sr=th+1;
+  for(const c of cats){
+    const row=sumWs.getRow(sr); row.values=[c.cat, c.n, null, null];
+    row.getCell(3).value={formula:`COUNTIF('Stock Valuation'!N${c.first}:N${c.last},"Cost Missing")`, result:c.missing};
+    row.getCell(4).value={formula:`'Stock Valuation'!I${c.sub}`, result:c.sen/100}; row.getCell(4).numFmt=RM; sr++;
+  }
+  const tr=sumWs.getRow(sr); tr.values=["GRAND TOTAL", null, null, null]; tr.font=bold;
+  tr.getCell(2).value={formula:cats.length?`SUM(B${th+1}:B${sr-1})`:"0", result:fin.rows.length};
+  tr.getCell(3).value={formula:cats.length?`SUM(C${th+1}:C${sr-1})`:"0", result:fin.missing};
+  tr.getCell(4).value={formula:cats.length?`SUM(D${th+1}:D${sr-1})`:"0", result:fin.totalSen/100}; tr.getCell(4).numFmt=RM;
+  tr.eachCell(c=>c.border={top:{style:"thin"}});
+  const notes=["Total stock value = Final verified quantity × Unit cost.",
+    fin.missing?`${fin.missing} item(s) have no unit cost and are marked Cost Missing. They are not included in the total. Enter the cost in column H of Stock Valuation and the totals update automatically.`:"Every item has a unit cost.",
+    "Only quantities from the finalised, verified count are included. Each item appears once; stock kept in several places is added together.",
+    "Klinify remains the clinic's stock record. This report does not change Klinify."];
+  notes.forEach((t,j)=>{ const c=sumWs.getCell(sr+2+j,1); c.value=t; sumWs.mergeCells(sr+2+j,1,sr+2+j,4); c.alignment={wrapText:true}; sumWs.getRow(sr+2+j).height=t.length>90?32:18; });
+  return wb;
+}
+async function exportXlsx(fin){
+  toast("Making the Excel file…");
+  const wb=await makeWorkbook(fin);
+  const buf=await wb.xlsx.writeBuffer();
+  const name=`NC-Stock-Valuation-${fin.test?"TEST-":""}${new Date(fin.at).toLocaleDateString("en-CA",{timeZone:TZ})}.xlsx`;
+  const type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const file=new File([buf], name, {type});
+  let shared=false;
+  try{ if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:name}); shared=true; } }catch(e){ if(e.name==="AbortError") return toast("Not shared. Tap Export again to retry."); }
+  if(!shared){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([buf],{type})); a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
+  log(`Exported Excel valuation ${name}`); await save();
+  toast(shared?"Choose where to save or send the Excel file":"Excel file downloaded");
 }
 
 async function vCountItem(){
   const s=S.sessions.find(x=>x.id===view.id); const l=s.lines[view.i]; const it=item(l.itemId);
-  const blocks = await Promise.all(l.locIds.map(async id=>{
+  const t=view.task?liveTasks(s).find(x=>x.id===view.task):null;
+  const locIds = t ? t.slots.filter(x=>x.i===view.i).map(x=>x.loc) : freeLocs(s,view.i);
+  const blocks = await Promise.all(locIds.map(async id=>{
     const loc=S.locations.find(x=>x.id===id); const c=l.counts[id]; const d=(view.drafts||{})[id]||{};
     const photo = d.photo || (c&&c.photo); const qty = d.qty!=null?d.qty:(c?c.qty:"");
-    return `<div class="card"><div class="row between"><h2>${esc(loc.label)}</h2>${c?`<span class="chip ok">Saved</span>`:`<span class="chip">To do</span>`}</div>
+    const head = `<div class="row between"><h2>${esc(loc.label)}</h2>${c?`<span class="chip ok">Saved</span>`:`<span class="chip">To do</span>`}</div>`;
+    if(!canCountSlot(s,view.i,id)){
+      return `<div class="card">${head}<p class="num">${c?`<b>${esc(c.qty)} ${esc(l.unit)}</b> · counted by ${esc(userName(c.by))} · ${fmt(c.at)}`:"Not counted yet"}</p>${c&&c.photo?`<img class="thumb" src="${await photoUrl(c.photo)}" alt="Stock photo">`:""}</div>`;
+    }
+    return `<div class="card">${head}
+    <button class="link" data-act="renloc" data-id="${id}">Rename this place</button>
     <label for="q${id}">How many ${esc(l.unit)}?<input id="q${id}" inputmode="decimal" data-act="qty" data-loc="${id}" value="${esc(qty)}" placeholder="0 if empty"></label>
     <div class="row">${photo?`<img class="thumb" src="${await photoUrl(photo)}" alt="Stock photo">`:""}<button data-act="locphoto" data-loc="${id}">${photo?"Retake photo":"Take photo of the stock"}</button></div>
     <button class="primary" data-act="savecount" data-loc="${id}">${c?"Update this place":"Save this place"}</button></div>`;
   }));
-  return header(it.name) + `<button class="link" data-act="open" data-id="${s.id}">← Back to count list</button>
+  return header(it.name) + (t?`<button class="link" data-act="opentask" data-id="${s.id}" data-t="${t.id}">← Back to task</button>`:`<button class="link" data-act="open" data-id="${s.id}">← Back to count list</button>`) + `
   <p class="muted">Count each place separately. Photo should show the stock only, no patient records.</p>${blocks.join("")}
   <button class="link" data-act="go" data-v="items">Missing a place? Edit places for this item</button>`;
+}
+
+function vTask(){
+  const s=S.sessions.find(x=>x.id===view.id); const t=liveTasks(s).find(x=>x.id===view.t);
+  if(!t) return header("Task") + `<p class="muted">This task was cancelled.</p>`;
+  const st=taskStatus(s,t); const mine=t.assignee===me.id;
+  const byLine={}; t.slots.forEach(x=>(byLine[x.i] ||= []).push(x.loc));
+  const done=t.slots.filter(x=>s.lines[x.i].counts[x.loc]).length;
+  let h = header(t.label) + `${can("assign")?`<button class="link" data-act="open" data-id="${s.id}">← Back to the count</button>`:""}
+  <div class="card"><div class="row between"><b>${done} of ${t.slots.length} places counted</b><span class="chip ${TASK_CHIP[st]}">${st}</span></div>
+  <div class="bar"><i style="width:${Math.round(100*done/(t.slots.length||1))}%"></i></div>
+  <p class="muted">Assigned to ${esc(userName(t.assignee))} by ${esc(userName(t.by))} · ${fmt(t.at)}${t.submittedAt?` · submitted ${fmt(t.submittedAt)}`:""}${t.verifiedAt?` · verified by ${esc(userName(t.verifiedBy))} ${fmt(t.verifiedAt)}`:""}</p></div>`;
+  if(t.returnNote && !t.submittedAt) h += `<div class="notice bad">Sent back by ${esc(userName(t.returnedBy))}: ${esc(t.returnNote)}</div>`;
+  if(mine && !t.submittedAt) h += `<div class="notice">Klinify figures are hidden. Count what is really there, then submit for checking.</div>`;
+  h += Object.entries(byLine).map(([i,locs])=>{ const l=s.lines[+i]; const d=locs.filter(id=>l.counts[id]).length;
+    const qty = (!mine||t.submittedAt) && d ? ` · ${locs.map(id=>l.counts[id]?esc(l.counts[id].qty):"–").join(" + ")} ${esc(l.unit)}` : "";
+    return `<button class="listbtn card" data-act="countitem" data-i="${i}" data-t="${t.id}"><span><b>${esc(item(l.itemId).name)}</b><br><span class="muted num">${d}/${locs.length} places${qty}</span></span><span class="chip ${d===locs.length?"ok":d?"teal":""}">${d===locs.length?"Done":d?"Started":"To do"}</span></button>`; }).join("");
+  if(mine && !t.submittedAt) h += `<button class="primary full" data-act="submittask" ${done===t.slots.length?"":"disabled"}>Submit for checking</button>${done<t.slots.length?`<p class="muted">Submit unlocks when every place has a number and a photo.</p>`:""}`;
+  if(can("verify") && t.submittedAt && !t.verifiedAt){
+    h += mine ? `<div class="notice">Someone else must check your own task.</div>` : `<div class="card"><h2>Check this task</h2><p class="muted">Open each item to see the counts and photos.</p>
+    <button class="primary" data-act="verifytask">Mark as verified</button><button class="danger" data-act="returntask">Send back to ${esc(userName(t.assignee))}</button></div>`;
+  }
+  if(can("assign") && !done && !t.submittedAt) h += `<button class="danger full" data-act="canceltask">Cancel this task</button>`;
+  return h;
+}
+
+// places nobody has counted or been given yet, grouped by shelf, category or item; archived items are left out
+function assignGroups(s,by){
+  const groups={};
+  s.lines.forEach((l,i)=>{ const it=item(l.itemId); if(!it||it.archived) return;
+    freeLocs(s,i).forEach(loc=>{ if(l.counts[loc]) return;
+      const key = by==="place" ? S.locations.find(o=>o.id===loc).label : by==="category" ? (it.category||"Uncategorised") : String(i);
+      (groups[key] ||= {label: by==="items"?it.name:key, slots:[]}).slots.push({i,loc}); }); });
+  return groups;
+}
+function vAssign(){
+  const s=S.sessions.find(x=>x.id===view.id);
+  const by=view.ab||"place", pick=view.pick||{};
+  const groups=assignGroups(s,by);
+  const q=(view.aq||"").toLowerCase();
+  const keys=Object.keys(groups).filter(k=>groups[k].label.toLowerCase().includes(q)).sort((a,b)=>groups[a].label.localeCompare(groups[b].label));
+  const chosen=Object.keys(pick).filter(k=>pick[k]&&groups[k]).reduce((a,k)=>a+groups[k].slots.length,0);
+  const people=S.users.filter(u=>u.active!==false && u.id!==s.preparer);
+  return header("Assign a counting task") + `<button class="link" data-act="open" data-id="${s.id}">← Back to the count</button>
+  <div class="card"><label for="asg">Who will count?<select id="asg" data-act="asg"><option value="">Choose a person…</option>${people.map(u=>`<option value="${u.id}" ${view.asg===u.id?"selected":""}>${esc(u.name)} (${esc(ROLE_LABEL[u.role])})</option>`).join("")}</select></label>
+  <label for="ab">Choose places by<select id="ab" data-act="ab"><option value="place" ${by==="place"?"selected":""}>Shelf or place</option><option value="category" ${by==="category"?"selected":""}>Category</option><option value="items" ${by==="items"?"selected":""}>Individual items</option></select></label>
+  <p class="muted">The person who entered the Klinify figures cannot be given a task.</p></div>
+  <div class="card"><div class="row between"><h2>${by==="place"?"Places":by==="category"?"Categories":"Items"}</h2><span class="chip teal">${chosen} place(s) chosen</span></div>
+  <input id="aq" data-act="aq" placeholder="Search" value="${esc(view.aq||"")}" aria-label="Search">
+  ${keys.slice(0,150).map(k=>`<label class="check"><input type="checkbox" data-act="apick" data-k="${esc(k)}" ${pick[k]?"checked":""}> <span>${esc(groups[k].label)} <span class="muted">· ${groups[k].slots.length} place(s)</span></span></label>`).join("")||`<p class="muted">Every place already has a task or a count.</p>`}
+  ${keys.length>150?`<p class="muted">Showing 150 of ${keys.length}. Search to narrow the list.</p>`:""}</div>
+  <label for="alabel">Task name (optional)<input id="alabel" data-act="alabel" value="${esc(view.alabel||"")}" placeholder="e.g. Dispensary Shelf A"></label>
+  <button class="primary full" data-act="maketask" ${chosen&&view.asg?"":"disabled"}>Assign ${chosen} place(s)${view.asg?` to ${esc(userName(view.asg))}`:""}</button>`;
 }
 
 async function vLine(){
@@ -563,15 +799,26 @@ function vReview(){
 }
 
 function vItems(){
-  const q=(view.q||"").toLowerCase();
+  const q=(view.q||"").toLowerCase(); const mgr=can("items"); const sel=view.isel||{}; const picking=mgr&&view.ipick;
   const all=S.items.filter(i=>!i.archived && i.name.toLowerCase().includes(q)); const items=all.slice(0,60);
+  const nsel=Object.keys(sel).filter(k=>sel[k]).length;
+  const archived=S.items.filter(i=>i.archived && (i.archivedInfo || !/^TEST /.test(i.name))); // sample items retired by the first import stay hidden
   return header("Items & places") + `
   <input id="isearch" data-act="isearch" placeholder="Search items" value="${esc(view.q||"")}" aria-label="Search items">
-  ${items.map(i=>`<div class="card"><div class="row between"><b>${esc(i.name)}</b><span class="muted">${esc(i.unit)}</span></div>
+  ${mgr?`<div class="row">${picking?`<button class="link" data-act="iselshown">Select all shown (${all.length})</button> · <button class="link" data-act="iselnone">Clear</button> · <button class="link" data-act="ipick">Done</button>`:`<button class="link" data-act="ipick">Select several items</button>`}</div>`:""}
+  ${picking&&nsel?`<div class="card"><b>${nsel} item(s) selected</b><div class="row"><button style="flex:1" data-act="bulkcat">Set category</button><button style="flex:1" class="danger" data-act="bulkarch">Archive</button></div></div>`:""}
+  ${items.map(i=>`<div class="card"><div class="row between">${picking?`<label class="check"><input type="checkbox" data-act="isel" data-id="${i.id}" ${sel[i.id]?"checked":""}> <b>${esc(i.name)}</b></label>`:`<b>${esc(i.name)}</b>`}<span class="muted">${esc(i.unit)}</span></div>
+    <p class="muted">${esc(i.category||"Uncategorised")}${i.strength?` · ${esc(i.strength)}`:""}${mgr?` · ${i.unitCost?`RM ${esc(i.unitCost)} per ${esc(i.unit)}`:`<span class="chip warn">Cost missing</span>`}`:""}</p>
     ${activeLocs(i.id).map(l=>`<div class="row between"><span>${esc(l.label)}</span><span class="row" style="gap:4px"><button class="link" data-act="renloc" data-id="${l.id}">Rename</button> · <button class="link" data-act="archloc" data-id="${l.id}">Remove</button></span></div>`).join("")||`<p class="muted">No places yet.</p>`}
-    <button class="link" data-act="addloc" data-id="${i.id}">+ Add a place</button></div>`).join("")}
+    <div class="row"><button class="link" data-act="addloc" data-id="${i.id}">+ Add a place</button>${mgr?` · <button class="link" data-act="editdetails" data-id="${i.id}">Edit details</button> · <button class="link" data-act="archone" data-id="${i.id}">Archive</button>`:""}</div></div>`).join("")}
   ${all.length>60?`<p class="muted">Showing 60 of ${all.length} items. Search to find others.</p>`:""}
-  <div class="card"><h2>Add an item</h2><label for="niname">Item name (as in Klinify)<input id="niname" data-act="niname" value="${esc(view.niname||"")}"></label><label for="niunit">Unit<input id="niunit" data-act="niunit" value="${esc(view.niunit||"")}" placeholder="TABLET, BOX, VIAL…"></label><button data-act="additem">Add item</button></div>
+  ${mgr?`<div class="card"><h2>Add an item</h2><label for="niname">Item name (as in Klinify)<input id="niname" data-act="niname" value="${esc(view.niname||"")}"></label><label for="niunit">Unit<input id="niunit" data-act="niunit" value="${esc(view.niunit||"")}" placeholder="TABLET, BOX, VIAL…"></label><button data-act="additem">Add item</button></div>`:""}
+  ${mgr&&archived.length?`<button class="full" data-act="showarch">${view.showArch?"Hide":"Show"} archived items (${archived.length})</button>`:""}
+  ${mgr&&view.showArch?archived.filter(i=>i.name.toLowerCase().includes(q)).map(i=>{ const a=i.archivedInfo||{}; const used=S.sessions.some(x=>x.lines.some(l=>l.itemId===i.id));
+    return `<div class="card"><div class="row between"><b>${esc(i.name)}</b><span class="chip">${esc(i.status||"Archived")}</span></div>
+    <p class="muted">${a.by?`${esc(userName(a.by))} · ${fmt(a.at)} · `:""}${esc(a.reason||"")}</p>
+    <div class="row"><button style="flex:1" data-act="restoreitem" data-id="${i.id}">Restore</button>${used?"":`<button style="flex:1" class="danger" data-act="delitem" data-id="${i.id}">Delete permanently</button>`}</div>
+    ${used?`<p class="muted">Used in past counts, so it can only be archived, not deleted.</p>`:""}</div>`; }).join(""):""}
   <p class="muted">Every change is logged for Dr Nazren's review.</p>`;
 }
 
@@ -579,8 +826,20 @@ function vActivity(){
   return header("Activity log") + `<div class="card log">${S.log.slice(0,300).map(e=>`<div><span class="muted num">${fmt(e.at)}</span> · <b>${esc(userName(e.by))}</b> · ${esc(e.text)}</div>`).join("")||"<p class='muted'>No activity yet.</p>"}</div>`;
 }
 function vStaff(){
-  return header("Dom / Ester access") + S.users.filter(u=>u.role!=="admin").map(u=>`<div class="card"><div class="row between"><b>${esc(u.name)}</b><span class="chip ${u.active===false?"bad":"ok"}">${u.active===false?"Off":"On"}</span></div>
-  <div class="row"><button data-act="toggleuser" data-id="${u.id}">${u.active===false?"Turn on":"Turn off"}</button><button data-act="resetpin" data-id="${u.id}">Reset PIN</button></div></div>`).join("") + `<p class="muted">Reset PIN lets that person choose a new PIN at next sign-in.</p>`;
+  const admin=me.role==="admin";
+  const row=u=>{
+    const mayEdit = u.role!=="admin" && (admin || u.role==="staff");
+    return `<div class="card"><div class="row between"><span><b>${esc(u.name)}</b><br><span class="muted">${esc(ROLE_LABEL[u.role])}${u.role==="admin"?" · permanent":""}</span></span><span class="row" style="gap:6px">${u.hash?"":`<span class="chip warn">No PIN yet</span>`}<span class="chip ${u.active===false?"bad":"ok"}">${u.active===false?"Off":"On"}</span></span></div>
+    ${mayEdit?`<div class="row"><button data-act="toggleuser" data-id="${u.id}">${u.active===false?"Turn on":"Turn off"}</button><button data-act="resetpin" data-id="${u.id}">Reset PIN</button>${admin?`<button data-act="setrole" data-id="${u.id}">${u.role==="manager"?"Remove as stock manager":"Make stock manager"}</button>`:""}</div>`:""}</div>`;
+  };
+  const by=r=>S.users.filter(u=>u.role===r);
+  return header("Staff & access") + `
+  <div class="card"><h2>Add a staff member</h2><label for="nuname">Name<input id="nuname" data-act="nuname" value="${esc(view.nuname||"")}" maxlength="40"></label>
+  <button data-act="adduser">Add staff</button><p class="muted">They choose their own 6-digit PIN the first time they sign in, so ask them to do it straight away.</p></div>
+  ${by("admin").map(row).join("")}
+  <h2>Stock managers</h2>${by("manager").map(row).join("")||`<p class="muted">None.</p>`}
+  <h2>Staff (${by("staff").length})</h2>${by("staff").map(row).join("")||`<p class="muted">No staff added yet.</p>`}
+  <p class="muted">Reset PIN lets that person choose a new PIN at next sign-in.${admin?"":" Only Dr Nazren can change stock managers."}</p>`;
 }
 function vBackup(){
   return header("Recovery copy") + `
@@ -603,8 +862,9 @@ async function render(){
     let h;
     if(!me){ h = view.name==="pin"?vPin():view.name==="restore"?vRestore():vLogin(); }
     else{
-      const f={import:vImport,home:vHome,new:vNew,session:vSession,countitem:vCountItem,line:vLine,review:vReview,items:vItems,activity:vActivity,staff:vStaff,backup:vBackup,history:vHistory}[view.name]||vHome;
-      if(view.name!=="home" && ["activity","staff","backup"].includes(view.name) && me.role!=="admin") h=vHome(); else h=await f();
+      const f={import:vImport,home:vHome,new:vNew,session:vSession,countitem:vCountItem,line:vLine,review:vReview,items:vItems,activity:vActivity,staff:vStaff,backup:vBackup,history:vHistory,task:vTask,assign:vAssign}[view.name]||vHome;
+      const need={import:"import",new:"prepare",assign:"assign",staff:"users",activity:"admin-only",backup:"admin-only"}[view.name];
+      if(need && !can(need)) h=vHome(); else h=await f();
     }
     app.innerHTML = h;
   }catch(e){ console.error(e); app.innerHTML = header("Something went wrong", !!me) + `<div class="notice bad">${esc(e.message)}</div><p class="muted">Your saved records are safe.</p>`; }
@@ -669,10 +929,11 @@ async function act(a, el){
     case "sel": view.sel=view.sel||{}; view.sel[d.id]=el.checked; return render();
     case "selall": { const items=S.items.filter(i=>!i.archived); const all=items.every(i=>(view.sel||{})[i.id]); view.sel={}; if(!all) items.forEach(i=>view.sel[i.id]=true); return render(); }
     case "create": {
+      if(!can("prepare")) return;
       const ids=Object.keys(view.sel||{}).filter(k=>view.sel[k]);
       for(const id of ids){ if(!activeLocs(id).length){ S.locations.push({id:uid("L"),itemId:id,label:"Place not set yet",active:true}); } }
       const rep=S.report;
-      const s={id:uid("S"), type:view.type||"Weekly", createdAt:now(), preparer:me.id, status:"preparing", sourcePhoto:null,
+      const s={id:uid("S"), type:view.type||"Weekly", createdAt:now(), preparer:me.id, status:"preparing", sourcePhoto:null, tasks:[],
         reportFile: rep?rep.file:null, sourceAt: rep?rep.printedAt:null, sourceAtLocal: rep?isoToLocalInput(rep.printedAt):"", scope: rep?"Klinify Inventory Status Report (printed PDF)":"",
         lines: ids.map(id=>{ const it=item(id); const k=rep&&it.klinify&&it.klinify.reportId===rep.id?it.klinify:null;
           return {itemId:id, expected:k&&k.total!==null?k.total:"", fromReport:!!k, batches:k?k.batches:null, plusTotal:k?k.plusTotal:null, minusRows:k?k.minusRows:0, unit:it.unit, locIds:activeLocs(id).map(l=>l.id), counts:{}, total:null, result:null}; })};
@@ -683,7 +944,7 @@ async function act(a, el){
     case "nq": view.nq=el.value; await render(); { const i=$("#nq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); } return;
     case "iq": view.iq=el.value; await render(); { const i=$("#iq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); } return;
     case "importpdf": {
-      const inp=el; { const f=inp.files&&inp.files[0]; if(!f) return;
+      if(!can("import")) return; const inp=el; { const f=inp.files&&inp.files[0]; if(!f) return;
         view.busy="Opening PDF…"; render();
         try{ const r=await readKlinifyPdf(f,(i,n)=>{ if(i%5===0||i===n){ view.busy=`Reading page ${i} of ${n}…`; const b=$("[data-act=importpdf]"); if(b) b.textContent=view.busy; } });
           r.file=f; view.result=r; }
@@ -692,22 +953,66 @@ async function act(a, el){
       return;
     }
     case "importsave": {
-      const r=view.result; if(!r) return;
+      const r=view.result; if(!r || !can("import")) return;
       const fileId=uid("R"); await photoPut(fileId, r.file);
       const repId=uid("K");
       S.report={id:repId, file:fileId, printedAt:r.printedAt||now(), name:r.file.name, items:r.items.length, by:me.id, at:now()};
       // first real import retires the fake TEST items
       S.items.filter(i=>/^TEST /.test(i.name)&&!i.archived).forEach(i=>{ i.archived=true; });
-      let added=0, updated=0;
+      let added=0, updated=0, kept=0;
       for(const ki of r.items){
-        let it=S.items.find(i=>!i.archived && i.name.toLowerCase()===ki.name.toLowerCase() && i.unit.toLowerCase()===ki.unit.toLowerCase());
-        if(!it){ it={id:uid("I"), name:ki.name, unit:ki.unit}; S.items.push(it); added++; } else updated++;
+        const same=i=>!/^TEST /.test(i.name) && i.name.toLowerCase()===ki.name.toLowerCase() && i.unit.toLowerCase()===ki.unit.toLowerCase();
+        // an archived item stays archived when it shows up in a later report
+        let it=S.items.find(i=>!i.archived && same(i)) || S.items.find(i=>i.archived && same(i));
+        if(!it){ it={id:uid("I"), name:ki.name, unit:ki.unit, category:"Uncategorised", strength:guessStrength(ki.name)}; S.items.push(it); added++; } else if(it.archived) kept++; else updated++;
         it.klinify={reportId:repId, total:ki.total, plusTotal:ki.plusTotal, minusRows:ki.minusRows, batches:ki.batches, printedAt:S.report.printedAt};
       }
-      log(`Imported Klinify report ${r.file.name} (${r.items.length} items: ${added} new, ${updated} updated)`); await save();
+      log(`Imported Klinify report ${r.file.name} (${r.items.length} items: ${added} new, ${updated} updated${kept?`, ${kept} kept archived`:""})`); await save();
       view={name:"home"}; toast(`Saved ${r.items.length} items`); return render();
     }
     case "open": return go({name:"session", id:d.id});
+    case "opentask": return go({name:"task", id:d.id, t:d.t});
+    // tasks
+    case "assign": if(!can("assign")) return; return go({name:"assign", id:view.id, ab:"place", pick:{}});
+    case "asg": view.asg=el.value; return render();
+    case "ab": view.ab=el.value; view.pick={}; return render();
+    case "apick": view.pick=view.pick||{}; view.pick[d.k]=el.checked; return render();
+    case "aq": view.aq=el.value; await render(); { const i=$("#aq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); } return;
+    case "alabel": view.alabel=el.value; return;
+    case "maketask": {
+      if(!can("assign")) return; const s=sess(); const groups=assignGroups(s, view.ab||"place");
+      const keys=Object.keys(view.pick||{}).filter(k=>view.pick[k]&&groups[k]); const slots=keys.flatMap(k=>groups[k].slots);
+      if(!view.asg || !slots.length) return toast("Choose a person and at least one place.");
+      if(view.asg===s.preparer) return toast("The person who entered the Klinify figures cannot count.");
+      const label=(($("#alabel")||{}).value||"").trim() || keys.map(k=>groups[k].label).slice(0,3).join(", ")+(keys.length>3?` and ${keys.length-3} more`:"");
+      const t={id:uid("T"), label, assignee:view.asg, slots, by:me.id, at:now(), submittedAt:null, verifiedBy:null, verifiedAt:null};
+      (s.tasks ||= []).push(t); log(`Assigned task "${label}" (${slots.length} places) to ${userName(t.assignee)}`); await save();
+      toast(`Task given to ${userName(t.assignee)}`); return go({name:"session", id:s.id});
+    }
+    case "submittask": { const s=sess(); const t=liveTasks(s).find(x=>x.id===view.t);
+      if(!t || t.assignee!==me.id) return; if(t.slots.some(x=>!s.lines[x.i].counts[x.loc])) return toast("Count every place first.");
+      t.submittedAt=now(); t.returnNote=null; log(`Submitted task "${t.label}" for checking`); await save(); toast("Submitted for checking"); return render(); }
+    case "verifytask": { const s=sess(); const t=liveTasks(s).find(x=>x.id===view.t);
+      if(!can("verify") || !t || !t.submittedAt) return; if(t.assignee===me.id) return toast("Someone else must check your own task.");
+      t.verifiedBy=me.id; t.verifiedAt=now(); log(`Verified task "${t.label}" counted by ${userName(t.assignee)}`); await save(); toast("Task verified"); return render(); }
+    case "returntask": { const s=sess(); const t=liveTasks(s).find(x=>x.id===view.t); if(!can("verify") || !t) return;
+      return askText("Send back for recount", "What should be rechecked?", "", async v=>{ t.submittedAt=null; t.returnNote=v; t.returnedBy=me.id; t.returnedAt=now();
+        log(`Sent back task "${t.label}" to ${userName(t.assignee)}: ${v}`); await save(); toast("Sent back"); render(); }); }
+    case "canceltask": { const s=sess(); const t=liveTasks(s).find(x=>x.id===view.t); if(!can("assign") || !t) return;
+      return confirmBox("Cancel this task?", `The ${t.slots.length} place(s) go back to the unassigned list.`, "Cancel task", async ()=>{ t.cancelled=true; t.cancelledBy=me.id; t.cancelledAt=now();
+        log(`Cancelled task "${t.label}"`); await save(); go({name:"session", id:s.id}); }, true); }
+    // final valuation
+    case "finalise": { const s=sess(); if(!can("export") || S.finals.some(f=>f.sessionId===s.id)) return;
+      if(s.lines.some(l=>!lineClosed(l))) return toast("Some differences still need a decision.");
+      const per=new Date(s.createdAt).toLocaleDateString("en-GB",{timeZone:TZ,month:"long",year:"numeric"});
+      const arch=s.lines.filter(l=>{ const it=item(l.itemId); return !it||it.archived; }).length;
+      modal(`<h2>Finalise for Accounts</h2><p class="muted">This saves the verified quantities and the unit costs as they are now. Later changes to items or costs will not change this record.${arch?` ${arch} archived item(s) are left out.`:""}</p>
+        <label for="fper">Reporting period<input id="fper" value="${esc(per)}"></label><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Finalise</button></div>`);
+      window._mok = async ()=>{ const period=$("#fper").value.trim(); if(!period) return; closeModal();
+        const fin=buildFinal(s, period); S.finals.unshift(fin);
+        log(`Finalised stock valuation for ${s.type} count (${fin.rows.length} items, RM ${money(fin.totalSen)}${fin.missing?`, ${fin.missing} cost missing`:""})`); await save(); toast("Finalised"); render(); };
+      return; }
+    case "exportxlsx": { if(!can("export")) return; const fin=S.finals.find(f=>f.id===d.f); if(fin) return exportXlsx(fin); return; }
     case "srcphoto": { const p=await pickPhoto(); if(p){ const s=sess(); s.sourcePhoto=p; await save(); render(); } return; }
     case "viewsrc": { const s=sess(); const u=await photoUrl(s.sourcePhoto); modal(`<h2>Klinify screenshot</h2><p class="muted">Checked ${fmt(s.sourceAt)}${s.scope?` · ${esc(s.scope)}`:""}</p><img src="${u}" alt="Klinify screenshot"><button data-act="mclose">Close</button>`); return; }
     case "handover": {
@@ -719,22 +1024,26 @@ async function act(a, el){
       return confirmBox("Hand over for counting?","You will be signed out so the counter can sign in. You cannot change the Klinify figures after this.","Hand over", doIt);
     }
     // counting
-    case "countitem": return go({name:"countitem", id:view.id, i:+d.i, drafts:{}});
+    case "countitem": return go({name:"countitem", id:view.id, i:+d.i, task:d.t||null, drafts:{}});
     case "locphoto": { const p=await pickPhoto(); if(p){ view.drafts=view.drafts||{}; view.drafts[d.loc]={...(view.drafts[d.loc]||{}), qty:$("#q"+d.loc).value, photo:p}; render(); } return; }
     case "savecount": {
       const s=sess(); if(s.preparer===me.id){ toast("The preparer cannot count."); return; }
-      if(s.counter && s.counter!==me.id){ toast("Another person is counting this session."); return; }
+      if(!canCountSlot(s, view.i, d.loc)){ toast("This place is counted by someone else."); return; }
       const l=s.lines[view.i]; const dr=(view.drafts||{})[d.loc]||{}; const qty=$("#q"+d.loc).value.trim(); const photo=dr.photo||(l.counts[d.loc]||{}).photo;
       if(qty===""){ toast("Enter a number. Type 0 if the place is empty."); return; }
       const m=toMilli(qty); if(m===null||m<0){ toast("Use a number that is 0 or more."); return; }
       if(!photo){ toast("Take a photo of the stock at this place."); return; }
       const prev=l.counts[d.loc]; l.counts[d.loc]={qty:fromMilli(m), photo, by:me.id, at:now(), prev: prev?[...(prev.prev||[]),{qty:prev.qty,at:prev.at}]:[]};
-      s.counter=me.id; const loc=S.locations.find(x=>x.id===d.loc);
+      if(!s.counter) s.counter=me.id; const loc=S.locations.find(x=>x.id===d.loc);
       log(`${prev?"Changed":"Counted"} ${item(l.itemId).name} at ${loc.label}: ${fromMilli(m)}`); await save();
       delete view.drafts[d.loc]; toast("Saved"); return render();
     }
     case "askfinish": return confirmBox("Finish and compare?","After this, counts are locked and the Klinify figures are shown.","Finish", async ()=>{
       const s=sess(); if(s.preparer===me.id) return toast("The preparer cannot finish the count.");
+      if(!can("finish")) return toast("A stock manager or Dr Nazren finishes the count.");
+      if(liveTasks(s).some(t=>!t.verifiedAt)) return toast("Every task must be verified first.");
+      if(progress(s).done!==progress(s).total) return toast("Every place must be counted first.");
+      s.finishedBy=me.id;
       s.lines.forEach(l=>{ const tot=l.locIds.reduce((a,id)=>a+toMilli(l.counts[id].qty),0); l.total=fromMilli(tot);
         l.result = String(l.expected).trim()==="" ? "NO_SOURCE" : fromMilli(tot - toMilli(l.expected)); });
       s.status="complete"; s.completedAt=now(); log(`Finished ${s.type} count: ${s.lines.filter(l=>l.result==="0").length}/${s.lines.length} matched`); await save(); go({name:"session", id:s.id});
@@ -772,22 +1081,100 @@ async function act(a, el){
     case "isearch": view.q=el.value; await render(); const i=$("#isearch"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); return;
     case "niname": view.niname=el.value; return;
     case "niunit": view.niunit=el.value; return;
-    case "additem": { const n=$("#niname").value.trim(), u=$("#niunit").value.trim(); if(!n||!u) return toast("Enter the item name and unit.");
+    case "additem": { if(!can("items")) return; const n=$("#niname").value.trim(), u=$("#niunit").value.trim(); if(!n||!u) return toast("Enter the item name and unit.");
       if(S.items.some(x=>!x.archived&&x.name.toLowerCase()===n.toLowerCase())) return toast("That item already exists.");
-      const id=uid("I"); S.items.push({id,name:n,unit:u}); log(`Added item ${n} (${u})`); await save(); view.niname=view.niunit=""; toast("Item added. Now add its places."); return render(); }
+      const id=uid("I"); S.items.push({id,name:n,unit:u,category:"Uncategorised",strength:guessStrength(n)}); log(`Added item ${n} (${u})`); await save(); view.niname=view.niunit=""; toast("Item added. Now add its places."); return render(); }
     case "addloc": return askText("Add a place", "Place name", "", async v=>{ const it=item(d.id); if(activeLocs(it.id).some(l=>l.label.toLowerCase()===v.toLowerCase())) return toast("That place already exists.");
       S.locations.push({id:uid("L"),itemId:it.id,label:v,active:true}); log(`Added place "${v}" for ${it.name}`); await save(); render(); });
     case "renloc": { const l=S.locations.find(x=>x.id===d.id); return askText("Rename place","Place name",l.label, async v=>{ log(`Renamed place "${l.label}" to "${v}" for ${item(l.itemId).name}`); l.label=v; await save(); render(); }); }
     case "archloc": { const l=S.locations.find(x=>x.id===d.id); return confirmBox("Remove this place?", `${l.label} will no longer be counted for ${item(l.itemId).name}. Past counts keep it.`, "Remove", async ()=>{ l.active=false; log(`Removed place "${l.label}" for ${item(l.itemId).name}`); await save(); render(); }, true); }
+    case "ipick": view.ipick=!view.ipick; view.isel={}; return render();
+    case "isel": view.isel=view.isel||{}; view.isel[d.id]=el.checked; return render();
+    case "iselshown": { view.isel=view.isel||{}; const q=(view.q||"").toLowerCase(); S.items.filter(i=>!i.archived&&i.name.toLowerCase().includes(q)).forEach(i=>view.isel[i.id]=true); return render(); }
+    case "iselnone": view.isel={}; return render();
+    case "showarch": view.showArch=!view.showArch; return render();
+    case "archone": return archiveItems([d.id]);
+    case "bulkarch": return archiveItems(Object.keys(view.isel||{}).filter(k=>view.isel[k]));
+    case "bulkcat": { if(!can("items")) return; const ids=Object.keys(view.isel||{}).filter(k=>view.isel[k]); if(!ids.length) return;
+      return askCategory(`Set category for ${ids.length} item(s)`, "", async v=>{ ids.forEach(id=>{ const it=item(id); if(it) it.category=v; }); log(`Set category "${v}" for ${ids.length} item(s)`); await save(); view.isel={}; toast("Category saved"); render(); }); }
+    case "editdetails": return editDetails(d.id);
+    case "restoreitem": { if(!can("items")) return; const it=item(d.id);
+      return confirmBox("Restore this item?", `${it.name} goes back on the active list and can be counted again.`, "Restore", async ()=>{ it.archived=false; it.restoredInfo={by:me.id, at:now(), was:it.status}; delete it.status;
+        log(`Restored item ${it.name}`); await save(); toast("Restored"); render(); }); }
+    case "delitem": return deleteItem(d.id);
     // staff
-    case "toggleuser": { const u=S.users.find(x=>x.id===d.id); u.active = u.active===false; log(`${u.active?"Turned on":"Turned off"} ${u.name}`); await save(); return render(); }
-    case "resetpin": { const u=S.users.find(x=>x.id===d.id); return askAdminPin(async ()=>{ u.hash=u.salt=null; log(`Reset PIN for ${u.name}`); await save(); toast(`${u.name} will choose a new PIN`); render(); }); }
+    case "nuname": view.nuname=el.value; return;
+    case "adduser": { if(!can("users")) return; const n=$("#nuname").value.trim().replace(/\s+/g," ");
+      if(!n) return toast("Enter the person's name."); if(S.users.some(u=>u.name.toLowerCase()===n.toLowerCase())) return toast("Someone with that name already exists.");
+      S.users.push({id:uid("U"), name:n, role:"staff", salt:null, hash:null, active:true, createdBy:me.id, createdAt:now()});
+      log(`Added staff member ${n}`); await save(); view.nuname=""; toast(`${n} added`); return render(); }
+    case "toggleuser": { const u=S.users.find(x=>x.id===d.id); if(!u || !mayManage(u)) return toast("You cannot change this person.");
+      u.active = u.active===false; log(`${u.active?"Turned on":"Turned off"} ${u.name}`); await save(); return render(); }
+    case "resetpin": { const u=S.users.find(x=>x.id===d.id); if(!u || !mayManage(u)) return toast("You cannot change this person.");
+      const doIt=async ()=>{ u.hash=u.salt=null; log(`Reset PIN for ${u.name}`); await save(); toast(`${u.name} will choose a new PIN`); render(); };
+      return me.role==="admin" ? askAdminPin(doIt) : confirmBox(`Reset ${u.name}'s PIN?`, `${u.name} will choose a new PIN at next sign-in. Ask them to do it straight away.`, "Reset PIN", doIt); }
+    case "setrole": { const u=S.users.find(x=>x.id===d.id); if(me.role!=="admin" || !u || u.role==="admin") return toast("Only Dr Nazren can change stock managers.");
+      return askAdminPin(async ()=>{ u.role = u.role==="manager" ? "staff" : "manager"; log(`${u.role==="manager"?"Made":"Removed"} ${u.name} ${u.role==="manager"?"a stock manager":"as stock manager"}`); await save(); toast("Saved"); render(); }); }
     // backup
     case "bp": return;
     case "backup": return doBackup();
     case "rp": return;
     case "restore": return doRestore();
   }
+}
+
+// managers may change staff only; the admin may change anyone except the admin
+const mayManage = u => u.role!=="admin" && (me.role==="admin" || (can("users") && u.role==="staff"));
+function categoryList(){ return [...new Set(S.items.map(i=>i.category).filter(Boolean))].sort(); }
+function askCategory(title, value, onOk){
+  modal(`<h2>${esc(title)}</h2><label for="mcat">Category<input id="mcat" list="catlist" value="${esc(value||"")}" placeholder="e.g. Tablets, Syrups, Vaccines, Consumables"></label><datalist id="catlist">${categoryList().map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
+  <div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Save</button></div>`);
+  window._mok = ()=>{ const v=$("#mcat").value.trim(); if(!v) return; closeModal(); onOk(v); };
+}
+function editDetails(id){
+  if(!can("items")) return; const it=item(id);
+  modal(`<h2>${esc(it.name)}</h2><label for="dcat">Category<input id="dcat" list="catlist" value="${esc(it.category||"")}"></label><datalist id="catlist">${categoryList().map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
+  <label for="dstr">Strength / specification<input id="dstr" value="${esc(it.strength||"")}"></label>
+  <label for="dcost">Unit cost (RM per ${esc(it.unit)})<input id="dcost" inputmode="decimal" value="${esc(it.unitCost||"")}" placeholder="Leave blank if not known"></label>
+  <div id="merr"></div><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="primary" data-act="mok">Save</button></div>`);
+  window._mok = async ()=>{
+    const cat=$("#dcat").value.trim()||"Uncategorised", str=$("#dstr").value.trim(), cost=$("#dcost").value.trim().replace(/^RM\s*/i,"");
+    if(cost && costTT(cost)===null) return $("#merr").innerHTML=`<div class="notice bad">Unit cost must be a number, for example 0.35 or 12.50.</div>`;
+    const ch=[]; if(cat!==it.category) ch.push(`category "${cat}"`); if(str!==(it.strength||"")) ch.push(`strength "${str}"`); if(cost!==(it.unitCost||"")) ch.push(`unit cost ${cost?"RM "+cost:"cleared"}`);
+    it.category=cat; it.strength=str; it.unitCost=cost; closeModal();
+    if(ch.length){ log(`Changed ${it.name}: ${ch.join(", ")}`); await save(); toast("Saved"); } render(); };
+}
+function archiveItems(ids){
+  if(!can("items") || !ids.length) return;
+  const names=ids.map(id=>item(id).name);
+  modal(`<h2>Archive ${ids.length===1?esc(names[0]):ids.length+" items"}?</h2>
+  <p class="muted">Archived items leave the active list, new counts and new tasks. Past counts and finalised reports keep them. You can restore them later.</p>
+  <label for="astat">Mark as<select id="astat">${ARCHIVE_STATUSES.map(x=>`<option>${esc(x)}</option>`).join("")}</select></label>
+  <label for="areason">Reason<textarea id="areason" rows="2" placeholder="e.g. No longer supplied"></textarea></label>
+  <div id="merr"></div><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="danger" data-act="mok">Archive</button></div>`);
+  window._mok = async ()=>{
+    const status=$("#astat").value, reason=$("#areason").value.trim();
+    if(!reason) return $("#merr").innerHTML=`<div class="notice bad">Give a reason.</div>`;
+    closeModal();
+    for(const id of ids){ const it=item(id); it.archived=true; it.status=status; it.archivedInfo={by:me.id, at:now(), reason};
+      // counts still being prepared drop the item; counts already handed over keep their record
+      S.sessions.filter(x=>x.status==="preparing").forEach(x=>{ x.lines=x.lines.filter(l=>l.itemId!==id); });
+      log(`Archived ${it.name} as ${status}: ${reason}`); }
+    await save(); view.isel={}; toast(`${ids.length} item(s) archived`); render(); };
+}
+function deleteItem(id){
+  if(!can("items")) return; const it=item(id);
+  if(S.sessions.some(x=>x.lines.some(l=>l.itemId===id))) return toast("This item is in past counts, so it can only be archived.");
+  modal(`<h2>Delete ${esc(it.name)} permanently?</h2><p class="muted">Use this only for a wrong or duplicate import. It cannot be undone.</p>
+  <label for="dreason">Reason<input id="dreason" placeholder="e.g. Duplicate of another item"></label>
+  <label for="dconf">Type DELETE to confirm<input id="dconf" autocomplete="off"></label>
+  <div id="merr"></div><div class="row"><button style="flex:1" data-act="mclose">Cancel</button><button style="flex:1" class="danger" data-act="mok">Delete</button></div>`);
+  window._mok = async ()=>{
+    const reason=$("#dreason").value.trim();
+    if(!reason) return $("#merr").innerHTML=`<div class="notice bad">Give a reason.</div>`;
+    if($("#dconf").value.trim()!=="DELETE") return $("#merr").innerHTML=`<div class="notice bad">Type DELETE in capitals to confirm.</div>`;
+    closeModal(); S.items=S.items.filter(i=>i.id!==id); S.locations=S.locations.filter(l=>l.itemId!==id);
+    S.removed.push({name:it.name, unit:it.unit, by:me.id, at:now(), reason}); log(`Deleted ${it.name} permanently: ${reason}`); await save(); toast("Deleted"); render(); };
 }
 
 async function doBackup(){
@@ -821,7 +1208,7 @@ async function doRestore(){
       const plain = await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(box.iv)}, await aesKey(pass,unb64(box.salt)), unb64(box.data));
       const obj=JSON.parse(new TextDecoder().decode(plain));
       for(const [k,v] of Object.entries(obj.photos)){ const o=typeof v==="string"?{t:"image/jpeg",d:v}:v; await photoPut(k, new Blob([unb64(o.d)],{type:o.t})); }
-      S=obj.state; S.log.unshift({at:now(),by:"-",text:`Restored from recovery copy made ${fmt(obj.made)}`}); await save(); toast("Restored. Sign in with your usual PIN."); go("home");
+      S=migrate(obj.state); S.log.unshift({at:now(),by:"-",text:`Restored from recovery copy made ${fmt(obj.made)}`}); await save(); toast("Restored. Sign in with your usual PIN."); go("home");
     }catch(e){ toast(e.name==="OperationError"?"Wrong passphrase or damaged file. Nothing was changed.":e.message); }
   };
   document.body.appendChild(inp); inp.click();
@@ -838,13 +1225,14 @@ document.addEventListener("input", async e=>{
     else if(a==="scope") s.scope=el.value;
     else if(a==="srcat"){ s.sourceAtLocal=el.value; s.sourceAt = el.value? new Date(el.value+":00+08:00").toISOString() : null; await save(); return render(); }
     await save(); return; } }
-  if(["rc","rvnote","kref","niname","niunit","isearch","bp","rp","nq","iq"].includes(a) && el.type!=="checkbox" && el.tagName!=="SELECT") act(a, el);
+  if(["rc","rvnote","kref","niname","niunit","isearch","bp","rp","nq","iq","aq","alabel","nuname"].includes(a) && el.type!=="checkbox" && el.tagName!=="SELECT") act(a, el);
 });
 
 (async function start(){
   try{
     db = await openDb(); S = await kvGet("state");
     if(!S){ S=blankState(); await save(); }
+    else if(!S.v || S.v<2 || !S.finals){ S=migrate(S); await save(); }
   }catch(e){ $("#app").innerHTML = `<div class="notice bad">This browser blocked storage, so records cannot be saved here. Open the app in Chrome (not a private tab).</div>`; return; }
   render();
 })();
